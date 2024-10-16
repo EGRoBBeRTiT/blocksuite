@@ -3,10 +3,14 @@ import type {
   PointTestOptions,
   SerializedElement,
 } from '@blocksuite/block-std/gfx';
-import type { IVec, SerializedXYWH, XYWH } from '@blocksuite/global/utils';
+import type {
+  IVec,
+  SerializedXYWH,
+  XYTangentInOut,
+  XYWH,
+} from '@blocksuite/global/utils';
 
 import {
-  derive,
   field,
   GfxPrimitiveElementModel,
   local,
@@ -15,7 +19,6 @@ import {
   Bound,
   curveIntersects,
   getBezierNearestPoint,
-  getBezierNearestTime,
   getBezierParameters,
   getBezierPoint,
   linePolylineIntersects,
@@ -104,6 +107,16 @@ export type ConnectorElementProps = BaseElementProps & {
 } & ConnectorLabelProps;
 
 export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorElementProps> {
+  static #_rapidlyChangingFields = [
+    'labelXYWH',
+    'source',
+    'target',
+    'points',
+    'xywh',
+  ];
+
+  #_path: PointLocation[] = [];
+
   updatingPath = false;
 
   // @ts-ignore
@@ -121,6 +134,22 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       bounds = bounds.unite(Bound.fromXYWH(this.labelXYWH!));
     }
     return bounds;
+  }
+
+  get path() {
+    if (!this.#_path || !this.#_path.length) {
+      this.path = this.points.map(p => new PointLocation(...p));
+    }
+
+    return this.#_path;
+  }
+
+  set path(value: PointLocation[]) {
+    const [x, y] = this.deserializedXYWH;
+
+    this.absolutePath = value.map(p => p.clone().setVec(Vec.add(p, [x, y])));
+
+    this.#_path = value;
   }
 
   get type() {
@@ -184,13 +213,14 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return Polyline.nearestPoint(points, point);
     }
 
-    const b = getBezierParameters(path);
-    const t = getBezierNearestTime(b, point);
-    const p = getBezierPoint(b, t);
-    if (p) return p;
+    try {
+      const { point: nearestPoint } = getBezierNearestPoint(path, point);
 
-    const { x, y } = this;
-    return [x, y];
+      return nearestPoint;
+    } catch (_) {
+      const { x, y } = this;
+      return [x, y];
+    }
   }
 
   /**
@@ -228,8 +258,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return pl / fl;
     }
 
-    const b = getBezierParameters(path);
-    return getBezierNearestTime(b, point);
+    return getBezierNearestPoint(path, point).t;
   }
 
   /**
@@ -261,9 +290,13 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return [x + w / 2, y + h / 2];
     }
 
-    const b = getBezierParameters(path);
-    const point = getBezierPoint(b, offsetDistance);
-    if (point) return point;
+    for (let i = 1; i < path.length; i++) {
+      const b = getBezierParameters([path[i - 1], path[i]]);
+      const point = getBezierPoint(b, offsetDistance);
+
+      if (point) return point;
+    }
+
     return [x + w / 2, y + h / 2];
   }
 
@@ -292,7 +325,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
     const point =
       mode === ConnectorMode.Curve
-        ? getBezierNearestPoint(getBezierParameters(path), currentPoint)
+        ? getBezierNearestPoint(path, currentPoint).point
         : polyLineNearestPoint(path, currentPoint);
 
     return (
@@ -331,6 +364,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     }
   }
 
+  popRapidlyFields() {
+    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+      this.pop(field);
+    });
+  }
+
   resize(bounds: Bound, originalPath: PointLocation[], matrix: DOMMatrix) {
     this.updatingPath = false;
 
@@ -338,20 +377,15 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
     // the property assignment order matters
     this.xywh = bounds.serialize();
-    this.path = path.map(p => p.clone().setVec(Vec.sub(p, bounds.tl)));
+    this.points = path.map(p =>
+      p.clone().setVec(Vec.sub(p, bounds.tl)).toXYTangentInOut()
+    );
 
     const props: {
       labelXYWH?: XYWH;
       source?: Connection;
       target?: Connection;
     } = {};
-
-    // Updates Connector's Label position.
-    if (this.hasLabel()) {
-      const [cx, cy] = this.getPointByOffsetDistance(this.labelOffset.distance);
-      const [, , w, h] = this.labelXYWH!;
-      props.labelXYWH = [cx - w / 2, cy - h / 2, w, h];
-    }
 
     if (!this.source.id) {
       props.source = {
@@ -397,6 +431,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     const result = super.serialize();
     result.xywh = this.xywh;
     return result as SerializedConnectorElement;
+  }
+
+  stashRapidlyFields() {
+    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+      this.stash(field);
+    });
   }
 
   @local()
@@ -458,15 +498,8 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor mode: ConnectorMode = ConnectorMode.Orthogonal;
 
-  @derive((path: PointLocation[], instance) => {
-    const { x, y } = instance;
-
-    return {
-      absolutePath: path.map(p => p.clone().setVec(Vec.add(p, [x, y]))),
-    };
-  })
-  @local()
-  accessor path: PointLocation[] = [];
+  @field([] as XYTangentInOut[])
+  accessor points: XYTangentInOut[] = [];
 
   @field('Arrow' as PointStyle)
   accessor rearEndpointStyle!: PointStyle;
@@ -505,7 +538,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor text: Y.Text | undefined = undefined;
 
-  @local()
+  @field()
   accessor xywh: SerializedXYWH = '[0,0,0,0]';
 }
 

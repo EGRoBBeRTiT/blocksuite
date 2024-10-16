@@ -93,6 +93,8 @@ export class ConnectorToolController extends EdgelessToolController<ConnectorToo
     }
 
     this._connector = connector as ConnectorElementModel;
+
+    this._connector.stashRapidlyFields();
   }
 
   afterModeSwitch() {
@@ -164,6 +166,8 @@ export class ConnectorToolController extends EdgelessToolController<ConnectorToo
   onContainerDragEnd() {
     if (this._mode === ConnectorToolMode.Quick) return;
     if (!this._connector) return;
+
+    this._connector.popRapidlyFields();
 
     this._doc.captureSync();
     this._edgeless.tools.switchToDefaultMode({
