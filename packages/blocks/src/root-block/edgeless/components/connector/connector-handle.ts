@@ -76,6 +76,9 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
   private _capPointerDown(e: PointerEvent, connection: 'target' | 'source') {
     const { edgeless, connector, _disposables } = this;
     const { service } = edgeless;
+
+    connector.stashRapidlyFields();
+
     e.stopPropagation();
     _disposables.addFromEvent(document, 'pointermove', e => {
       const point = service.viewport.toModelCoordFromClientCoord([e.x, e.y]);
@@ -90,6 +93,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
+      connector.popRapidlyFields();
       this._disposePointerup();
     });
   }
@@ -98,6 +102,8 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     const { edgeless, connector, _disposables } = this;
     const { service } = edgeless;
     e.stopPropagation();
+
+    connector.stashRapidlyFields();
 
     let movingAnchor: Element | null | undefined = target?.classList.contains(
       'available'
@@ -120,9 +126,12 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
         absolutePath[movingIndex].setVec(point);
 
-        ConnectorPathGenerator.updatePath(connector, absolutePath, undefined, [
-          movingIndex,
-        ]);
+        ConnectorPathGenerator.updatePoints(
+          connector,
+          absolutePath,
+          undefined,
+          [movingIndex]
+        );
 
         this.requestUpdate();
 
@@ -154,6 +163,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     _disposables.addFromEvent(document, 'pointerup', () => {
       movingAnchor = undefined;
       movingAnchorSelector = undefined;
+      connector.popRapidlyFields();
       this._disposePointerup();
     });
   }

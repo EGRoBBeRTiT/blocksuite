@@ -185,6 +185,8 @@ export class EdgelessAutoComplete extends WithDisposable(LitElement) {
             position: point,
           }
         );
+
+        connector.stashRapidlyFields();
       }
       if (this._isMoving) {
         assertExists(connector);
@@ -199,6 +201,10 @@ export class EdgelessAutoComplete extends WithDisposable(LitElement) {
     });
 
     this._disposables.addFromEvent(document, 'pointerup', e => {
+      if (connector) {
+        connector.popRapidlyFields();
+      }
+
       if (!this._isMoving) {
         this._generateElementOnClick(type);
       } else if (connector && !connector.target.id) {

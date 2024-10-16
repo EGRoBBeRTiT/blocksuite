@@ -12,6 +12,7 @@ import { ConnectorUtils, MindmapUtils } from '@blocksuite/affine-block-surface';
 import { focusTextModel } from '@blocksuite/affine-components/rich-text';
 import {
   ConnectorElementModel,
+  ConnectorMode,
   GroupElementModel,
   MindmapElementModel,
   ShapeElementModel,
@@ -385,6 +386,10 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
         ele.source?.id &&
         ele.target?.id
       ) {
+        if (ele.path.length > 2 && ele.mode !== ConnectorMode.Orthogonal) {
+          return true;
+        }
+
         if (
           this._toBeMoved.some(e => e.id === ele.source.id) &&
           this._toBeMoved.some(e => e.id === ele.target.id)
@@ -916,8 +921,14 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
           el.pop('xywh');
         });
 
+        this.edgelessSelectionManager.surfaceModel
+          .getConnectors(el.id)
+          .forEach(connector => {
+            connector.popRapidlyFields();
+          });
+
         if (el instanceof ConnectorElementModel) {
-          el.pop('labelXYWH');
+          el.popRapidlyFields();
         }
 
         if (el instanceof MindmapElementModel) {
@@ -1074,8 +1085,14 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
       this._toBeMoved.forEach(ele => {
         ele.stash('xywh');
 
+        this.edgelessSelectionManager.surfaceModel
+          .getConnectors(ele.id)
+          .forEach(connector => {
+            connector.stashRapidlyFields();
+          });
+
         if (ele instanceof ConnectorElementModel) {
-          ele.stash('labelXYWH');
+          ele.stashRapidlyFields();
         }
       });
     }

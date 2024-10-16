@@ -1,5 +1,12 @@
 import { type IVec, Vec } from './vec.js';
 
+export type XYTangentInOut = [
+  IVec, // XY
+  IVec, // Tangent
+  IVec, // In
+  IVec, // Out
+];
+
 /**
  * PointLocation is an implementation of IVec with in/out vectors and tangent.
  * This is useful when dealing with path.
@@ -90,5 +97,14 @@ export class PointLocation extends Array<number> implements IVec {
 
   toVec(): IVec {
     return [this[0], this[1]];
+  }
+
+  toXYTangentInOut(): XYTangentInOut {
+    return [
+      [this[0], this[1]],
+      [...this._tangent],
+      [...this._in],
+      [...this._out],
+    ];
   }
 }

@@ -29,7 +29,7 @@ export function mindmap(
       const elementGetter = (id: string) =>
         model.surface.getElementById(id) ??
         (model.surface.doc.getBlockById(id) as GfxModel);
-      ConnectorPathGenerator.updatePath(connector, null, elementGetter);
+      ConnectorPathGenerator.updatePoints(connector, null, elementGetter);
 
       if (connector) {
         const dx = connector.x - bound.x;

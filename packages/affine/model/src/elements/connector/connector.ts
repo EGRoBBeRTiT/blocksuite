@@ -3,10 +3,14 @@ import type {
   PointTestOptions,
   SerializedElement,
 } from '@blocksuite/block-std/gfx';
-import type { IVec, SerializedXYWH, XYWH } from '@blocksuite/global/utils';
+import type {
+  IVec,
+  SerializedXYWH,
+  XYTangentInOut,
+  XYWH,
+} from '@blocksuite/global/utils';
 
 import {
-  derive,
   field,
   GfxPrimitiveElementModel,
   local,
@@ -103,6 +107,16 @@ export type ConnectorElementProps = BaseElementProps & {
 } & ConnectorLabelProps;
 
 export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorElementProps> {
+  static #_rapidlyChangingFields = [
+    'labelXYWH',
+    'source',
+    'target',
+    'points',
+    'xywh',
+  ];
+
+  #_path: PointLocation[] = [];
+
   updatingPath = false;
 
   // @ts-ignore
@@ -120,6 +134,22 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       bounds = bounds.unite(Bound.fromXYWH(this.labelXYWH!));
     }
     return bounds;
+  }
+
+  get path() {
+    if (!this.#_path || !this.#_path.length) {
+      this.path = this.points.map(p => new PointLocation(...p));
+    }
+
+    return this.#_path;
+  }
+
+  set path(value: PointLocation[]) {
+    const [x, y] = this.deserializedXYWH;
+
+    this.absolutePath = value.map(p => p.clone().setVec(Vec.add(p, [x, y])));
+
+    this.#_path = value;
   }
 
   get type() {
@@ -334,6 +364,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     }
   }
 
+  popRapidlyFields() {
+    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+      this.pop(field);
+    });
+  }
+
   resize(bounds: Bound, originalPath: PointLocation[], matrix: DOMMatrix) {
     this.updatingPath = false;
 
@@ -341,20 +377,15 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
     // the property assignment order matters
     this.xywh = bounds.serialize();
-    this.path = path.map(p => p.clone().setVec(Vec.sub(p, bounds.tl)));
+    this.points = path.map(p =>
+      p.clone().setVec(Vec.sub(p, bounds.tl)).toXYTangentInOut()
+    );
 
     const props: {
       labelXYWH?: XYWH;
       source?: Connection;
       target?: Connection;
     } = {};
-
-    // Updates Connector's Label position.
-    if (this.hasLabel()) {
-      const [cx, cy] = this.getPointByOffsetDistance(this.labelOffset.distance);
-      const [, , w, h] = this.labelXYWH!;
-      props.labelXYWH = [cx - w / 2, cy - h / 2, w, h];
-    }
 
     if (!this.source.id) {
       props.source = {
@@ -400,6 +431,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     const result = super.serialize();
     result.xywh = this.xywh;
     return result as SerializedConnectorElement;
+  }
+
+  stashRapidlyFields() {
+    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+      this.stash(field);
+    });
   }
 
   @local()
@@ -461,18 +498,8 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor mode: ConnectorMode = ConnectorMode.Orthogonal;
 
-  @derive((path: PointLocation[], instance) => {
-    const { x, y } = instance;
-
-    return {
-      absolutePath: path.map(p => p.clone().setVec(Vec.add(p, [x, y]))),
-    };
-  })
-  @local()
-  accessor path: PointLocation[] = [];
-
-  @field([] as Vec[])
-  accessor points: Vec[] = [];
+  @field([] as XYTangentInOut[])
+  accessor points: XYTangentInOut[] = [];
 
   @field('Arrow' as PointStyle)
   accessor rearEndpointStyle!: PointStyle;
@@ -511,7 +538,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor text: Y.Text | undefined = undefined;
 
-  @local()
+  @field()
   accessor xywh: SerializedXYWH = '[0,0,0,0]';
 }
 
