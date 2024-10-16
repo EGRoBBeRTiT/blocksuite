@@ -192,6 +192,10 @@ function renderPoints(
 
     // ? This debug code should be removed
     if (curve) {
+      ctx.restore();
+
+      return;
+
       ctx.save();
 
       const w = 16;
