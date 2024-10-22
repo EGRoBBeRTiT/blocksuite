@@ -593,6 +593,16 @@ export class EdgelessSelectedRect extends WithDisposable(LitElement) {
     this.selection.selectedElements.forEach(el => {
       el.stash('xywh');
 
+      this.edgeless.surfaceBlockModel
+        .getConnectors(el.id)
+        .forEach(connector => {
+          connector.stashRapidlyFields();
+        });
+
+      if (el instanceof ConnectorElementModel) {
+        el.stashRapidlyFields();
+      }
+
       if (el instanceof NoteBlockModel) {
         el.stash('edgeless');
       }
@@ -608,6 +618,16 @@ export class EdgelessSelectedRect extends WithDisposable(LitElement) {
 
       this._dragEndCallback.push(() => {
         el.pop('xywh');
+
+        this.edgeless.surfaceBlockModel
+          .getConnectors(el.id)
+          .forEach(connector => {
+            connector.popRapidlyFields();
+          });
+
+        if (el instanceof ConnectorElementModel) {
+          el.popRapidlyFields();
+        }
 
         if (el instanceof NoteBlockModel) {
           el.pop('edgeless');

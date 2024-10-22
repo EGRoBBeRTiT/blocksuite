@@ -1,6 +1,9 @@
-import type { PointLocation, SerializedXYWH } from '@blocksuite/global/utils';
-
 import { GfxLocalElementModel } from '@blocksuite/block-std/gfx';
+import {
+  PointLocation,
+  type SerializedXYWH,
+  type XYTangentInOut,
+} from '@blocksuite/global/utils';
 
 import type { Connection } from './connector.js';
 
@@ -17,11 +20,20 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   absolutePath: PointLocation[] = [];
 
+  connection: { source: Connection; target: Connection } = {
+    source: {},
+    target: {},
+  };
+
   frontEndpointStyle!: PointStyle;
 
   id: string = '';
 
+  localUpdating = false;
+
   mode: ConnectorMode = ConnectorMode.Orthogonal;
+
+  points: XYTangentInOut[] = [];
 
   rearEndpointStyle!: PointStyle;
 
@@ -47,11 +59,12 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
     position: [0, 0],
   };
 
-  updatingPath = false;
-
   xywh: SerializedXYWH = '[0,0,0,0]';
 
   get path(): PointLocation[] {
+    if (!this._path || !this._path.length) {
+      this.path = this.points.map(p => new PointLocation(...p));
+    }
     return this._path;
   }
 
