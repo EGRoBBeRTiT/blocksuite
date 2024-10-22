@@ -1,5 +1,5 @@
 import type {
-  Connection,
+  ConnectionEnds,
   GfxCompatibleProps,
   ReferenceParams,
 } from '@blocksuite/affine-model';
@@ -542,8 +542,7 @@ export class EdgelessClipboardController extends PageClipboard {
       }
       clipboardData.children = yMap;
     } else if (clipboardData.type === CONNECTOR) {
-      const source = clipboardData.source as Connection;
-      const target = clipboardData.target as Connection;
+      const { source, target } = clipboardData.connection as ConnectionEnds;
 
       const oldBound = Bound.deserialize(clipboardData.xywh);
       const newBound = Bound.deserialize(newXYWH);
@@ -563,6 +562,8 @@ export class EdgelessClipboardController extends PageClipboard {
       } else if (target.position) {
         target.position = Vec.add(target.position, offset);
       }
+
+      clipboardData.xywh = newXYWH;
     } else {
       clipboardData.xywh = newXYWH;
     }

@@ -56,6 +56,11 @@ export type Connection = {
   position?: [number, number];
 };
 
+export type ConnectionEnds = {
+  source: Connection;
+  target: Connection;
+};
+
 export const getConnectorModeName = (mode: ConnectorMode) => {
   return {
     [ConnectorMode.Straight]: 'Straight',
@@ -458,7 +463,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   accessor absolutePath: PointLocation[] = [];
 
   @field()
-  accessor connection: { source: Connection; target: Connection } = {
+  accessor connection: ConnectionEnds = {
     source: {},
     target: {},
   };
