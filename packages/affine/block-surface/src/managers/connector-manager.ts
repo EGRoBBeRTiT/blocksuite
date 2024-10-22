@@ -1,5 +1,10 @@
 import type { GfxController, GfxModel } from '@blocksuite/block-std/gfx';
-import type { IBound, IVec, IVec3 } from '@blocksuite/global/utils';
+import type {
+  IBound,
+  IVec,
+  IVec3,
+  XYTangentInOut,
+} from '@blocksuite/global/utils';
 
 import {
   type BrushElementModel,
@@ -20,6 +25,7 @@ import {
   getBoundsWithRotation,
   getEntireBezierCurveBoundingBox,
   getPointFromBoundsWithRotation,
+  isEqual,
   isOverlap,
   isVecZero,
   last,
@@ -998,7 +1004,7 @@ export class ConnectionOverlay extends Overlay {
     // at last, if not, just return the point
     if (!result) {
       result = {
-        position: point as IVec,
+        position: point,
       };
     }
 
@@ -1071,155 +1077,8 @@ export class ConnectorPathGenerator {
     ];
   }
 
-  static addPointIntoPath(
-    connector: ConnectorElementModel | LocalConnectorElementModel,
-    insertIndex: number
-  ) {
-    let newPath: PointLocation[] = connector.absolutePath;
-
-    if (connector.mode === ConnectorMode.Curve) {
-      newPath = ConnectorPathGenerator._addPointIntoCurvePath(
-        connector,
-        insertIndex
-      );
-    }
-
-    if (connector.mode === ConnectorMode.Straight) {
-      newPath = ConnectorPathGenerator._addPointIntoStraightPath(
-        connector,
-        insertIndex
-      );
-    }
-
-    ConnectorPathGenerator.updatePoints(connector, newPath, undefined, [
-      insertIndex,
-    ]);
-  }
-
-  static updatePath(
-    connector: ConnectorElementModel | LocalConnectorElementModel
-  ) {
-    const { points } = connector;
-
-    connector.updatingPath = true;
-
-    connector.path = points.map(point => new PointLocation(...point));
-
-    // Updates Connector's Label position.
-    if (isConnectorWithLabel(connector)) {
-      const model = connector as ConnectorElementModel;
-      const [cx, cy] = model.getPointByOffsetDistance(
-        model.labelOffset.distance
-      );
-      const [, , w, h] = model.labelXYWH!;
-      model.labelXYWH = [cx - w / 2, cy - h / 2, w, h];
-    }
-
-    connector.updatingPath = false;
-  }
-
-  static updatePoints(
-    connector: ConnectorElementModel | LocalConnectorElementModel,
-    path: PointLocation[] | null,
-    elementGetter?: (id: string) => GfxModel | null,
-    controlIndexesForUpdate?: number[]
-  ) {
-    const instance = new ConnectorPathGenerator({
-      getElementById: elementGetter ?? (() => null),
-    });
-
-    const points = path ?? instance._generateConnectorPath(connector) ?? [];
-
-    if (connector.mode === ConnectorMode.Curve) {
-      controlIndexesForUpdate?.forEach(index => {
-        instance._autoSetAnchorControlPoints(connector, points, index);
-      });
-    }
-    const bound =
-      connector.mode === ConnectorMode.Curve
-        ? getEntireBezierCurveBoundingBox(points)
-        : getBoundFromPoints(points);
-    const relativePoints = points.map((p: PointLocation) =>
-      p
-        .clone()
-        .setVec(Vec.sub(p, [bound.x, bound.y]))
-        .toXYTangentInOut()
-    );
-
-    const newXYWH = bound.serialize();
-
-    connector.updatingPath = true;
-    // the property assignment order matters
-    if (newXYWH !== connector.xywh) {
-      connector.xywh = bound.serialize();
-    }
-    connector.points = relativePoints;
-  }
-
-  private _autoSetAnchorControlPoints(
-    connector: ConnectorElementModel | LocalConnectorElementModel,
-    points: PointLocation[],
-    pointIndex: number,
-    shouldChangeNeighbors = true
-  ) {
-    const point = points[pointIndex];
-    const isPointClosed = pointIndex > 0 && pointIndex < points.length - 1;
-
-    if (!point) {
-      return;
-    }
-
-    const updateNeighbors = () => {
-      if (shouldChangeNeighbors) {
-        this._autoSetAnchorControlPoints(
-          connector,
-          points,
-          pointIndex - 1,
-          false
-        );
-        this._autoSetAnchorControlPoints(
-          connector,
-          points,
-          pointIndex + 1,
-          false
-        );
-        if (pointIndex === 2) {
-          this._autoSetAnchorControlPoints(connector, points, 0, false);
-        }
-
-        if (pointIndex === points.length - 3) {
-          this._autoSetAnchorControlPoints(
-            connector,
-            points,
-            points.length - 1,
-            false
-          );
-        }
-      }
-    };
-
-    if (isPointClosed) {
-      this._autoSetClosedAnchorControlPoints(points, pointIndex);
-
-      updateNeighbors();
-    } else {
-      updateNeighbors();
-
-      const isStrictDirection =
-        (pointIndex === 0 && !!connector.source.id) ||
-        (pointIndex === points.length - 1 && !!connector.target.id);
-
-      this._autoSetOpenedAnchorControlPoints(
-        points,
-        pointIndex,
-        isStrictDirection
-      );
-    }
-
-    return points;
-  }
-
-  private _autoSetClosedAnchorControlPoints(
+  // ? Mutate the input points
+  private static _autoSetClosedAnchorControlPoints(
     points: PointLocation[],
     pointIndex: number
   ) {
@@ -1255,7 +1114,8 @@ export class ConnectorPathGenerator {
     return points;
   }
 
-  private _autoSetOpenedAnchorControlPoints(
+  // ? Mutate the input points
+  private static _autoSetOpenedAnchorControlPoints(
     points: PointLocation[],
     pointIndex: number,
     isStrictDirection = true
@@ -1275,7 +1135,7 @@ export class ConnectorPathGenerator {
 
         const control = Vec.mul(
           point.out,
-          Math.max(Vec.len(points[pointIndex + 1].in) / outLen, 100 / outLen)
+          Math.max(Vec.len(points[pointIndex + 1].in) / outLen, 50 / outLen)
         );
 
         point.out = control;
@@ -1288,7 +1148,7 @@ export class ConnectorPathGenerator {
 
         const control = Vec.mul(
           point.in,
-          Math.max(Vec.len(points[pointIndex - 1].out) / inLen, 100 / inLen)
+          Math.max(Vec.len(points[pointIndex - 1].out) / inLen, 50 / inLen)
         );
 
         point.in = control;
@@ -1320,6 +1180,184 @@ export class ConnectorPathGenerator {
     }
 
     return points;
+  }
+
+  private static _updateLabelXYWH(
+    connector: ConnectorElementModel | LocalConnectorElementModel
+  ) {
+    // Updates Connector's Label position.
+    if (isConnectorWithLabel(connector)) {
+      const model = connector as ConnectorElementModel;
+      const [cx, cy] = model.getPointByOffsetDistance(
+        model.labelOffset.distance
+      );
+      const [, , w, h] = model.labelXYWH!;
+      model.labelXYWH = [cx - w / 2, cy - h / 2, w, h];
+    }
+  }
+
+  static addPointIntoPath(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    insertIndex: number,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    let newPath: PointLocation[] = connector.absolutePath;
+
+    if (connector.mode === ConnectorMode.Curve) {
+      newPath = ConnectorPathGenerator._addPointIntoCurvePath(
+        connector,
+        insertIndex
+      );
+    }
+
+    if (connector.mode === ConnectorMode.Straight) {
+      newPath = ConnectorPathGenerator._addPointIntoStraightPath(
+        connector,
+        insertIndex
+      );
+    }
+
+    ConnectorPathGenerator.updatePoints(
+      connector,
+      newPath,
+      elementGetter,
+      insertIndex
+    );
+  }
+
+  static updatePath(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    points: XYTangentInOut[]
+  ) {
+    connector.path = points.map(point => new PointLocation(...point));
+  }
+
+  static updatePathEnds(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    const instance = new ConnectorPathGenerator({
+      getElementById: elementGetter,
+    });
+    const absolutePath = instance._generateConnectorPath(connector) ?? [];
+
+    if (connector.mode === ConnectorMode.Curve) {
+      instance._autoSetAnchorControlPoints(connector, absolutePath, 0);
+      instance._autoSetAnchorControlPoints(
+        connector,
+        absolutePath,
+        absolutePath.length - 1
+      );
+    }
+
+    const {
+      bound,
+      path: newPath,
+      points: newPoints,
+    } = instance._getNewBound(connector, absolutePath);
+
+    const newXYWH = bound.serialize();
+
+    if (newXYWH !== connector.xywh) {
+      connector.xywh = bound.serialize();
+      connector.path = newPath;
+      const { points } = connector;
+
+      if (
+        !isEqual(newPoints[0], points[0]) ||
+        !isEqual(newPoints[newPath.length - 1], points[points.length - 1])
+      ) {
+        connector.points = newPoints;
+      }
+    }
+
+    ConnectorPathGenerator._updateLabelXYWH(connector);
+  }
+
+  static updatePoints(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    absolutePath: PointLocation[],
+    elementGetter: (id: string) => GfxModel | null,
+    updatedIndex?: number
+  ) {
+    const instance = new ConnectorPathGenerator({
+      getElementById: elementGetter,
+    });
+
+    if (
+      connector.mode === ConnectorMode.Curve &&
+      typeof updatedIndex === 'number'
+    ) {
+      instance._autoSetAnchorControlPoints(
+        connector,
+        absolutePath,
+        updatedIndex
+      );
+    }
+
+    const { bound, path, points } = instance._getNewBound(
+      connector,
+      absolutePath
+    );
+
+    const newXYWH = bound.serialize();
+
+    // the property assignment order matters
+    if (newXYWH !== connector.xywh) {
+      connector.xywh = bound.serialize();
+    }
+    connector.points = points;
+    connector.path = path;
+    ConnectorPathGenerator._updateLabelXYWH(connector);
+  }
+
+  // ? Mutate the input points
+  private _autoSetAnchorControlPoints(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    points: PointLocation[],
+    pointIndex: number,
+    shouldChangeNeighbors = true
+  ) {
+    const point = points[pointIndex];
+    const isPointClosed = pointIndex > 0 && pointIndex < points.length - 1;
+    if (!point) {
+      return;
+    }
+    const updateNeighbors = () => {
+      if (shouldChangeNeighbors) {
+        const neighborIndexes = [pointIndex - 1, pointIndex + 1];
+        if (pointIndex === 2) {
+          neighborIndexes.push(0);
+        }
+        if (pointIndex === points.length - 3) {
+          neighborIndexes.push(points.length - 1);
+        }
+        neighborIndexes.forEach(index => {
+          this._autoSetAnchorControlPoints(connector, points, index, false);
+        });
+      }
+    };
+    if (isPointClosed) {
+      ConnectorPathGenerator._autoSetClosedAnchorControlPoints(
+        points,
+        pointIndex
+      );
+      updateNeighbors();
+    } else {
+      updateNeighbors();
+      const isStrictDirection =
+        (pointIndex === 0 &&
+          connector.source.id &&
+          this.options.getElementById(connector.source.id)) ||
+        (pointIndex === points.length - 1 &&
+          connector.target.id &&
+          this.options.getElementById(connector.target.id));
+      ConnectorPathGenerator._autoSetOpenedAnchorControlPoints(
+        points,
+        pointIndex,
+        !!isStrictDirection
+      );
+    }
   }
 
   private _computeStartEndPoint(
@@ -1537,6 +1575,33 @@ export class ConnectorPathGenerator {
     }
 
     return null;
+  }
+
+  private _getNewBound(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    absolutePath: PointLocation[]
+  ) {
+    const bound =
+      connector.mode === ConnectorMode.Curve
+        ? getEntireBezierCurveBoundingBox(absolutePath)
+        : getBoundFromPoints(absolutePath);
+
+    const { path, points } = absolutePath.reduce<{
+      path: PointLocation[];
+      points: XYTangentInOut[];
+    }>(
+      (acc, p: PointLocation) => {
+        const point = p.setVec(Vec.sub(p, [bound.x, bound.y]));
+
+        acc.path.push(point);
+        acc.points.push(point.toXYTangentInOut());
+
+        return acc;
+      },
+      { path: [], points: [] }
+    );
+
+    return { bound, path, points };
   }
 
   private _prepareOrthogonalConnectorInfo(

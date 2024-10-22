@@ -1,5 +1,6 @@
 import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import type { GfxModel } from '@blocksuite/block-std/gfx';
+import type { XYTangentInOut } from '@blocksuite/global/utils';
 
 import type { SurfaceBlockModel, SurfaceMiddleware } from '../surface-model.js';
 
@@ -21,10 +22,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
 
   const updateConnectorPoints = (connector: ConnectorElementModel) => {
     if (shouldUpdateConnectorPath(connector)) {
-      ConnectorPathGenerator.updatePoints(connector, null, elementGetter, [
-        0,
-        connector.path.length - 1,
-      ]);
+      ConnectorPathGenerator.updatePathEnds(connector, elementGetter);
     }
   };
 
@@ -58,17 +56,30 @@ export const connectorMiddleware: SurfaceMiddleware = (
     surface.elementUpdated.on(({ id, props }) => {
       const element = elementGetter(id);
 
+      const connector = element as ConnectorElementModel;
+
       if (props['xywh'] || props['rotate']) {
         surface.getConnectors(id).forEach(addToUpdateList);
       }
 
       if ('type' in element && element.type === 'connector') {
         if (props['points']) {
-          ConnectorPathGenerator.updatePath(element as ConnectorElementModel);
+          ConnectorPathGenerator.updatePath(
+            connector,
+            props['points'] as XYTangentInOut[]
+          );
+        }
+
+        if (props['connection']) {
+          if (connector.localUpdating) {
+            addToUpdateList(connector);
+
+            connector.localUpdating = false;
+          }
         }
 
         if (props['mode'] !== undefined || props['target'] || props['source']) {
-          addToUpdateList(element as ConnectorElementModel);
+          addToUpdateList(connector);
         }
       }
     }),

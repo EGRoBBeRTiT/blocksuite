@@ -201,9 +201,11 @@ export class EdgelessAutoComplete extends WithDisposable(LitElement) {
     });
 
     this._disposables.addFromEvent(document, 'pointerup', e => {
-      if (connector) {
-        connector.popRapidlyFields();
-      }
+      this.edgeless.doc.withoutTransact(() => {
+        if (connector) {
+          connector.popRapidlyFields();
+        }
+      });
 
       if (!this._isMoving) {
         this._generateElementOnClick(type);

@@ -140,7 +140,7 @@ export function showMergeIndicator(
   const elementGetter = (id: string) =>
     targetMindmap.surface.getElementById(id) ??
     (targetMindmap.surface.doc.getBlockById(id) as GfxModel);
-  ConnectorPathGenerator.updatePoints(connector, null, elementGetter);
+  ConnectorPathGenerator.updatePathEnds(connector, elementGetter);
 
   source.overriddenDir = mergeInfo.layoutType;
 

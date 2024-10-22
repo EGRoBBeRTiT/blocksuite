@@ -1,3 +1,5 @@
+import type { GfxModel } from '@blocksuite/block-std/gfx';
+
 import { ConnectorPathGenerator } from '@blocksuite/affine-block-surface';
 import {
   type ConnectorElementModel,
@@ -103,7 +105,9 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     const { service } = edgeless;
     e.stopPropagation();
 
-    connector.stashRapidlyFields();
+    connector.stash('xywh');
+    connector.stash('labelXYWH');
+    connector.stash('points');
 
     let movingAnchor: Element | null | undefined = target?.classList.contains(
       'available'
@@ -111,6 +115,10 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       ? target
       : undefined;
     let movingAnchorSelector: string | undefined = undefined;
+
+    const elementGetter = (id: string) =>
+      edgeless.surfaceBlockModel.getElementById(id) ??
+      (edgeless.surfaceBlockModel.doc.getBlockById(id) as GfxModel);
 
     _disposables.addFromEvent(document, 'pointermove', e => {
       const point = service.viewport.toModelCoordFromClientCoord([e.x, e.y]);
@@ -129,8 +137,8 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
         ConnectorPathGenerator.updatePoints(
           connector,
           absolutePath,
-          undefined,
-          [movingIndex]
+          elementGetter,
+          movingIndex
         );
 
         this.requestUpdate();
@@ -150,7 +158,11 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       ) {
         const index = Number(target?.getAttribute('data-point-id'));
 
-        ConnectorPathGenerator.addPointIntoPath(connector, index);
+        ConnectorPathGenerator.addPointIntoPath(
+          connector,
+          index,
+          elementGetter
+        );
 
         this.requestUpdate();
 
@@ -163,7 +175,9 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     _disposables.addFromEvent(document, 'pointerup', () => {
       movingAnchor = undefined;
       movingAnchorSelector = undefined;
-      connector.popRapidlyFields();
+      connector.pop('xywh');
+      connector.pop('labelXYWH');
+      connector.pop('points');
       this._disposePointerup();
     });
   }

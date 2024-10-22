@@ -167,7 +167,11 @@ export class ConnectorToolController extends EdgelessToolController<ConnectorToo
     if (this._mode === ConnectorToolMode.Quick) return;
     if (!this._connector) return;
 
-    this._connector.popRapidlyFields();
+    this._doc.withoutTransact(() => {
+      if (this._connector) {
+        this._connector.popRapidlyFields();
+      }
+    });
 
     this._doc.captureSync();
     this._edgeless.tools.switchToDefaultMode({

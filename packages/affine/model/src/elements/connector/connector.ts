@@ -109,15 +109,14 @@ export type ConnectorElementProps = BaseElementProps & {
 export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorElementProps> {
   static #_rapidlyChangingFields = [
     'labelXYWH',
-    'source',
-    'target',
     'points',
     'xywh',
+    'connection',
   ];
 
   #_path: PointLocation[] = [];
 
-  updatingPath = false;
+  localUpdating = false;
 
   // @ts-ignore
   override get connectable() {
@@ -150,6 +149,24 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     this.absolutePath = value.map(p => p.clone().setVec(Vec.add(p, [x, y])));
 
     this.#_path = value;
+  }
+
+  get source() {
+    return this.connection.source ?? [0, 0];
+  }
+
+  set source(value: Connection) {
+    this.localUpdating = true;
+    this.connection = { ...this.connection, source: value };
+  }
+
+  get target() {
+    return this.connection.target ?? [0, 0];
+  }
+
+  set target(value: Connection) {
+    this.localUpdating = true;
+    this.connection = { ...this.connection, target: value };
   }
 
   get type() {
@@ -371,8 +388,6 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   }
 
   resize(bounds: Bound, originalPath: PointLocation[], matrix: DOMMatrix) {
-    this.updatingPath = false;
-
     const path = this.resizePath(originalPath, matrix);
 
     // the property assignment order matters
@@ -441,6 +456,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
   @local()
   accessor absolutePath: PointLocation[] = [];
+
+  @field()
+  accessor connection: { source: Connection; target: Connection } = {
+    source: {},
+    target: {},
+  };
 
   @field('None' as PointStyle)
   accessor frontEndpointStyle!: PointStyle;
@@ -514,11 +535,6 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   accessor roughness: number = DEFAULT_ROUGHNESS;
 
   @field()
-  accessor source: Connection = {
-    position: [0, 0],
-  };
-
-  @field()
   accessor stroke: Color = '#000000';
 
   @field()
@@ -526,11 +542,6 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
   @field()
   accessor strokeWidth: number = 4;
-
-  @field()
-  accessor target: Connection = {
-    position: [0, 0],
-  };
 
   /**
    * The content of the label.

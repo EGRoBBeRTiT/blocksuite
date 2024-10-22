@@ -20,9 +20,16 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   absolutePath: PointLocation[] = [];
 
+  connection: { source: Connection; target: Connection } = {
+    source: {},
+    target: {},
+  };
+
   frontEndpointStyle!: PointStyle;
 
   id: string = '';
+
+  localUpdating = false;
 
   mode: ConnectorMode = ConnectorMode.Orthogonal;
 
@@ -51,8 +58,6 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
   target: Connection = {
     position: [0, 0],
   };
-
-  updatingPath = false;
 
   xywh: SerializedXYWH = '[0,0,0,0]';
 
