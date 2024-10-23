@@ -50,7 +50,8 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
   private _lastZoom = 1;
 
   private _bindEvent() {
-    const edgeless = this.edgeless;
+    const { edgeless, connector } = this;
+    const { surface } = edgeless.service;
 
     this._anchorHandlers.forEach(middleElement => {
       this._disposables.addFromEvent(
@@ -73,6 +74,13 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     this._disposables.add(() => {
       edgeless.service.connectorOverlay.clear();
     });
+    this._disposables.add(
+      surface.elementUpdated.on(({ id, props }) => {
+        if (id === connector.id && props['points']) {
+          this.requestUpdate();
+        }
+      })
+    );
   }
 
   private _capPointerDown(e: PointerEvent, connection: 'target' | 'source') {
@@ -91,7 +99,6 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
         point,
         otherSideId ? [otherSideId] : []
       );
-      this.requestUpdate();
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
@@ -141,8 +148,6 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           movingIndex
         );
 
-        this.requestUpdate();
-
         return;
       }
 
@@ -163,8 +168,6 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           index,
           elementGetter
         );
-
-        this.requestUpdate();
 
         movingAnchorSelector = `.line-anchor.available[data-point-id="${index}"]`;
 
