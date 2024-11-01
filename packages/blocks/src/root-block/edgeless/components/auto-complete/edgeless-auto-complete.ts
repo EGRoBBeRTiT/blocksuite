@@ -282,7 +282,7 @@ export class EdgelessAutoComplete extends WithDisposable(LitElement) {
       endPosition
     );
 
-    return this._pathGenerator.generateOrthogonalConnectorPath({
+    return this._pathGenerator.generateSmallestOrthogonalConnectorPath({
       startBound,
       endBound: nextBound,
       startPoint,

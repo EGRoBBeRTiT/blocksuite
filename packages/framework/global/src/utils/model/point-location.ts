@@ -5,6 +5,8 @@ export type XYTangentInOut = [
   IVec, // Tangent
   IVec, // In
   IVec, // Out
+  number, // x, 0 - false, 1 - true
+  number, // y, 0 - false, 1 - true
 ];
 
 /**
@@ -12,6 +14,8 @@ export type XYTangentInOut = [
  * This is useful when dealing with path.
  */
 export class PointLocation extends Array<number> implements IVec {
+  private _freezedAxis = { x: false, y: false };
+
   _in: IVec = [0, 0];
 
   _out: IVec = [0, 0];
@@ -29,6 +33,10 @@ export class PointLocation extends Array<number> implements IVec {
 
   get absOut() {
     return Vec.add(this, this._out);
+  }
+
+  get freezedAxis() {
+    return { ...this._freezedAxis };
   }
 
   get in() {
@@ -63,7 +71,9 @@ export class PointLocation extends Array<number> implements IVec {
     point: IVec = [0, 0],
     tangent: IVec = [0, 0],
     inVec: IVec = [0, 0],
-    outVec: IVec = [0, 0]
+    outVec: IVec = [0, 0],
+    freezedX?: number,
+    freezedY?: number
   ) {
     super(2);
     this[0] = point[0];
@@ -71,6 +81,9 @@ export class PointLocation extends Array<number> implements IVec {
     this._tangent = tangent;
     this._in = inVec;
     this._out = outVec;
+
+    this._freezedAxis.x = !!freezedX;
+    this._freezedAxis.y = !!freezedY;
   }
 
   static fromVec(vec: IVec) {
@@ -85,8 +98,18 @@ export class PointLocation extends Array<number> implements IVec {
       this as unknown as IVec,
       this._tangent,
       this._in,
-      this._out
+      this._out,
+      +this._freezedAxis.x,
+      +this._freezedAxis.y
     );
+  }
+
+  setFreezedAxis(x: boolean, y?: boolean) {
+    this._freezedAxis.x = x;
+
+    if (typeof y === 'boolean') {
+      this._freezedAxis.y = y;
+    }
   }
 
   setVec(vec: IVec) {
@@ -105,6 +128,8 @@ export class PointLocation extends Array<number> implements IVec {
       [...this._tangent],
       [...this._in],
       [...this._out],
+      +this._freezedAxis.x,
+      +this._freezedAxis.y,
     ];
   }
 }

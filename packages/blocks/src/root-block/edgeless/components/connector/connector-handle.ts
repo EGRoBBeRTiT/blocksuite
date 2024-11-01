@@ -1,14 +1,23 @@
 import type { GfxModel } from '@blocksuite/block-std/gfx';
 
-import { ConnectorPathGenerator } from '@blocksuite/affine-block-surface';
+import {
+  ConnectorPathGenerator,
+  rBound,
+} from '@blocksuite/affine-block-surface';
 import {
   type ConnectorElementModel,
   ConnectorMode,
 } from '@blocksuite/affine-model';
-import { DisposableGroup, Vec, WithDisposable } from '@blocksuite/global/utils';
+import {
+  Bound,
+  DisposableGroup,
+  getBoundsWithRotation,
+  Vec,
+  WithDisposable,
+} from '@blocksuite/global/utils';
 import { css, html, LitElement } from 'lit';
 import { property, query, queryAll } from 'lit/decorators.js';
-import { styleMap } from 'lit/directives/style-map.js';
+import { type StyleInfo, styleMap } from 'lit/directives/style-map.js';
 
 import type { EdgelessRootBlockComponent } from '../../edgeless-root-block.js';
 
@@ -122,6 +131,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       ? target
       : undefined;
     let movingAnchorSelector: string | undefined = undefined;
+    let movingIndex = Number.NaN;
 
     const elementGetter = (id: string) =>
       edgeless.surfaceBlockModel.getElementById(id) ??
@@ -130,22 +140,16 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     _disposables.addFromEvent(document, 'pointermove', e => {
       const point = service.viewport.toModelCoordFromClientCoord([e.x, e.y]);
 
-      const { absolutePath } = connector;
-
       if (movingAnchor) {
         const anchorElement = movingAnchor;
 
-        const movingIndex = Number(
-          anchorElement?.getAttribute('data-point-id')
-        );
+        const index = Number(anchorElement?.getAttribute('data-point-id'));
 
-        absolutePath[movingIndex].setVec(point);
-
-        ConnectorPathGenerator.updatePoints(
+        movingIndex = ConnectorPathGenerator.movePoint(
           connector,
-          absolutePath,
           elementGetter,
-          movingIndex
+          index,
+          point
         );
 
         return;
@@ -159,25 +163,41 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
       if (
         movingAnchor === undefined &&
-        target?.classList.contains('unavailable')
+        (target?.classList.contains('unavailable') ||
+          target?.classList.contains('freezed'))
       ) {
         const index = Number(target?.getAttribute('data-point-id'));
 
-        ConnectorPathGenerator.addPointIntoPath(
-          connector,
-          index,
-          elementGetter
-        );
+        if (connector.mode === ConnectorMode.Orthogonal) {
+          const index = isNaN(movingIndex)
+            ? Number(target?.getAttribute('data-point-id'))
+            : movingIndex;
 
-        movingAnchorSelector = `.line-anchor.available[data-point-id="${index}"]`;
+          movingIndex = ConnectorPathGenerator.movePoint(
+            connector,
+            elementGetter,
+            index,
+            point
+          );
+        } else {
+          ConnectorPathGenerator.addPointIntoPath(
+            connector,
+            index + 1,
+            elementGetter
+          );
 
-        movingAnchor = this.renderRoot.querySelector(movingAnchorSelector);
+          movingAnchorSelector = `.line-anchor.available[data-point-id="${index + 1}"]`;
+
+          movingAnchor = this.renderRoot.querySelector(movingAnchorSelector);
+        }
       }
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
       movingAnchor = undefined;
       movingAnchorSelector = undefined;
+      movingIndex = Number.NaN;
+      ConnectorPathGenerator.removeExtraPoints(connector);
       connector.pop('xywh');
       connector.pop('labelXYWH');
       connector.pop('points');
@@ -196,7 +216,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     edgeless.slots.elementResizeEnd.emit();
   }
 
-  private _getClosedAnchorPointTranslates() {
+  private _getClosedAnchorPointStyles() {
     const { path, mode } = this.connector;
     const { service } = this.edgeless;
     const { zoom } = service.viewport;
@@ -224,16 +244,24 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     }, []);
   }
 
-  private _getMiddlePointTranslates() {
-    const { path } = this.connector;
+  private _getMiddlePointStyles() {
+    const { path, mode, source, target, absolutePath } = this.connector;
     const { service } = this.edgeless;
     const { zoom } = service.viewport;
 
-    return path.reduce<
-      {
-        transform: string;
-      }[]
-    >((acc, point, index) => {
+    const isOrthogonal = mode === ConnectorMode.Orthogonal;
+
+    const start = source.id ? service.getElementById(source.id) : null;
+    const end = target.id ? service.getElementById(target.id) : null;
+
+    const startBound = start
+      ? Bound.from(getBoundsWithRotation(rBound(start)))
+      : null;
+    const endBound = end
+      ? Bound.from(getBoundsWithRotation(rBound(end)))
+      : null;
+
+    return path.reduce<StyleInfo[]>((acc, point, index) => {
       if (index > 0) {
         const start = path[index - 1];
         const end = point;
@@ -245,9 +273,39 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
         const domPoint = Vec.subScalar(Vec.mul(centerPoint, zoom), HALF_SIZE);
 
-        acc.push({
+        const styles: StyleInfo = {
           transform: `translate3d(${domPoint[0]}px,${domPoint[1]}px,0)`,
-        });
+          display: '',
+        };
+
+        if (isOrthogonal && (index === 1 || index === path.length - 1)) {
+          const pointIndex = index === 1 ? index : index - 1;
+          const bound = index === 1 ? startBound : endBound;
+          const startEndPoint =
+            index === 1
+              ? absolutePath[0]
+              : absolutePath[absolutePath.length - 1];
+          const absolutePoint = absolutePath[pointIndex];
+
+          const {
+            minX = startEndPoint[0],
+            minY = startEndPoint[1],
+            maxX = startEndPoint[0],
+            maxY = startEndPoint[1],
+          } = bound ?? {};
+
+          const distToLeft = Math.abs(startEndPoint[0] - minX);
+          const distToRight = Math.abs(startEndPoint[0] - maxX);
+          const distToTop = Math.abs(startEndPoint[1] - minY);
+          const distToBottom = Math.abs(startEndPoint[1] - maxY);
+          const minDist =
+            Math.min(distToLeft, distToRight, distToTop, distToBottom) + 20.01;
+          if (Vec.dist(absolutePoint, startEndPoint) <= minDist) {
+            styles.display = 'none';
+          }
+        }
+
+        acc.push(styles);
       }
 
       return acc;
@@ -286,15 +344,15 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       transform: `translate3d(${endPoint[0]}px,${endPoint[1]}px,0)`,
     };
 
-    const closedAnchorPointTranslates = this._getClosedAnchorPointTranslates();
-    const middlePointTranslates = this._getMiddlePointTranslates();
+    const closedAnchorPointStyles = this._getClosedAnchorPointStyles();
+    const middlePointStyles = this._getMiddlePointStyles();
 
     return html`
       <div
         class="line-controller line-start"
         style=${styleMap(startStyle)}
       ></div>
-      ${closedAnchorPointTranslates.map(
+      ${closedAnchorPointStyles.map(
         (style, index) =>
           html`<div
             style=${styleMap(style)}
@@ -302,14 +360,21 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
             data-point-id=${index + 1}
           ></div>`
       )}
-      ${middlePointTranslates.map(
-        (style, index) =>
-          html`<div
-            style=${styleMap(style)}
-            class="line-anchor unavailable"
-            data-point-id=${index + 1}
-          ></div>`
-      )}
+      ${middlePointStyles.map((style, index) => {
+        const beforeFreeze = this.connector.absolutePath[index].freezedAxis;
+        const afterFreeze = this.connector.absolutePath[index + 1].freezedAxis;
+
+        const isFreezedLine =
+          this.connector.mode === ConnectorMode.Orthogonal &&
+          ((beforeFreeze.x && afterFreeze.x) ||
+            (beforeFreeze.y && afterFreeze.y));
+
+        return html`<div
+          style=${styleMap(style)}
+          class="line-anchor ${isFreezedLine ? 'freezed' : 'unavailable'}"
+          data-point-id=${index}
+        ></div>`;
+      })}
       <div class="line-controller line-end" style=${styleMap(endStyle)}></div>
     `;
   }

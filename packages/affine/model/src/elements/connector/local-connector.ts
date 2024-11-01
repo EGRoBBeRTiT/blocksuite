@@ -33,6 +33,8 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   mode: ConnectorMode = ConnectorMode.Orthogonal;
 
+  modeUpdating = false;
+
   points: XYTangentInOut[] = [];
 
   rearEndpointStyle!: PointStyle;
