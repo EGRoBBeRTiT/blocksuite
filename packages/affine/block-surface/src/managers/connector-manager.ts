@@ -2003,14 +2003,14 @@ export class ConnectorPathGenerator {
     const pointOnLine = new PointLocation(
       Vec.nearestPointOnLineSegment(line[0], line[1], point, false)
     );
-    const dir = Vec.add(
+    const outsideBoundPoint = Vec.add(
       point,
       Vec.mul(
         Vec.uni(Vec.sub(pointOnLine, point)),
         Math.max(bound.w, bound.h) + 20
       )
     );
-    pointOnLine[lineDir] = dir[lineDir];
+    pointOnLine[lineDir] = outsideBoundPoint[lineDir];
     const path = this.generateSmallestOrthogonalConnectorPath({
       startPoint: point,
       startBound: bound,
