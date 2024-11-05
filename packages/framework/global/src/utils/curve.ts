@@ -134,24 +134,28 @@ export function getBezierNearestTime(
 export function getBezierNearestPoint(points: PointLocation[], point: IVec) {
   let nearestPointOnCurve: IVec | null = null;
   let minT = 0;
-  let minLen2PointOnCurve = Infinity;
+  let minDist2ToPointOnCurve = Infinity;
+  let segmentIndex = 0;
 
   for (let i = 1; i < points.length; i++) {
     const b = getBezierParameters([points[i - 1], points[i]]);
     const t = getBezierNearestTime(b, point);
     const pointOnCurve = getBezierPoint(b, t);
-    const len2PointOnCurve = pointOnCurve ? Vec.len2(pointOnCurve) : Infinity;
+    const dist2ToPointOnCurve = pointOnCurve
+      ? Vec.dist2(pointOnCurve, point)
+      : Infinity;
 
-    if (len2PointOnCurve < minLen2PointOnCurve) {
+    if (dist2ToPointOnCurve < minDist2ToPointOnCurve) {
       nearestPointOnCurve = pointOnCurve;
-      minLen2PointOnCurve = len2PointOnCurve;
+      minDist2ToPointOnCurve = dist2ToPointOnCurve;
       minT = t;
+      segmentIndex = i - 1;
     }
   }
 
   assertExists(nearestPointOnCurve);
 
-  return { point: nearestPointOnCurve, t: minT } as const;
+  return { point: nearestPointOnCurve, t: minT, segmentIndex } as const;
 }
 
 export function getBezierParameters(
@@ -440,4 +444,132 @@ export function curveIntersects(path: PointLocation[], line: [IVec, IVec]) {
   );
 
   return intersectedPoints.length > 0 ? intersectedPoints : null;
+}
+
+export function getPointAtBezierLineLen(points: PointLocation[], len: number) {
+  const n = points.length;
+
+  if (n === 0) {
+    return null;
+  }
+
+  if (n === 1) {
+    return points[0];
+  }
+
+  let fromStart = true;
+  if (len < 0) {
+    fromStart = false;
+    len = -len;
+  }
+
+  const stepsCount = 100;
+  const step = 1 / stepsCount;
+  let currLen = 0;
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    let prevPoint = getBezierPoint(b, 0);
+    for (let j = step; j <= 1; j += step) {
+      const point = getBezierPoint(b, j);
+      if (point && prevPoint) {
+        const prevLen = currLen;
+        currLen += Vec.dist(point, prevPoint);
+        if (currLen >= len) {
+          if (currLen - len < len - prevLen) {
+            return point;
+          }
+          return prevPoint;
+        }
+      }
+      prevPoint = point;
+    }
+  }
+  const lastPoint = fromStart ? points[n - 1] : points[0];
+  return lastPoint;
+}
+
+export function getPointAtBezierLine(points: PointLocation[], ratio: number) {
+  const n = points.length;
+
+  if (n === 0) {
+    return null;
+  }
+
+  if (n === 1) {
+    return points[0];
+  }
+
+  if (ratio <= 0) {
+    return points[0];
+  }
+
+  if (ratio >= 1) {
+    return points[n - 1];
+  }
+
+  const total = getBezierCurveLen(points);
+  const len = total * ratio;
+  return getPointAtBezierLineLen(points, len);
+}
+
+export function getBezierCurveSegmentLen(
+  values: BezierCurveParameters,
+  stepsCount = 100
+) {
+  const step = 1 / stepsCount;
+  let len = 0;
+  let prevPoint = getBezierPoint(values, 0);
+  for (let i = step; i <= 1; i += step) {
+    const point = getBezierPoint(values, i);
+    if (point && prevPoint) {
+      len += Vec.dist(point, prevPoint);
+    }
+    prevPoint = point;
+  }
+  return len;
+}
+
+export function getBezierCurveLen(
+  points: PointLocation[],
+  segmentStepsCount = 100
+) {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    len += getBezierCurveSegmentLen(b, segmentStepsCount);
+  }
+  return len;
+}
+
+export function getBezierCurveLenAtPoint(
+  points: PointLocation[],
+  point: IVec,
+  segmentStepsCount = 100
+) {
+  const step = 1 / segmentStepsCount;
+
+  const { t, segmentIndex } = getBezierNearestPoint(points, point);
+
+  let len = 0;
+
+  for (let i = 0; i < segmentIndex; i++) {
+    const b = getBezierParameters([points[i], points[i + 1]]);
+    len += getBezierCurveSegmentLen(b, segmentStepsCount);
+  }
+
+  const b = getBezierParameters([
+    points[segmentIndex],
+    points[segmentIndex + 1],
+  ]);
+  let prevPoint = getBezierPoint(b, 0);
+  const maxStep = Math.round(t / step) * step;
+  for (let i = step; i <= maxStep; i += step) {
+    const point = getBezierPoint(b, i);
+    if (point && prevPoint) {
+      len += Vec.dist(point, prevPoint);
+    }
+    prevPoint = point;
+  }
+
+  return len;
 }

@@ -18,9 +18,10 @@ import {
 import {
   Bound,
   curveIntersects,
+  getBezierCurveLen,
+  getBezierCurveLenAtPoint,
   getBezierNearestPoint,
-  getBezierParameters,
-  getBezierPoint,
+  getPointAtBezierLine,
   linePolylineIntersects,
   PointLocation,
   Polyline,
@@ -226,13 +227,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   override getNearestPoint(point: IVec): IVec {
     const { mode, absolutePath: path } = this;
 
-    if (mode === ConnectorMode.Straight) {
-      const first = path[0];
-      const last = path[path.length - 1];
-      return Vec.nearestPointOnLineSegment(first, last, point, true);
-    }
-
-    if (mode === ConnectorMode.Orthogonal) {
+    if (mode === ConnectorMode.Straight || mode === ConnectorMode.Orthogonal) {
       const points = path.map<IVec>(p => [p[0], p[1]]);
       return Polyline.nearestPoint(points, point);
     }
@@ -266,23 +261,17 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     point[0] = Vec.clamp(point[0], x, x + w);
     point[1] = Vec.clamp(point[1], y, y + h);
 
-    if (mode === ConnectorMode.Straight) {
-      const s = path[0];
-      const e = path[path.length - 1];
-      const pl = Vec.dist(s, point);
-      const fl = Vec.dist(s, e);
-      return pl / fl;
-    }
-
-    if (mode === ConnectorMode.Orthogonal) {
-      const points = path.map<IVec>(p => [p[0], p[1]]);
+    if (mode === ConnectorMode.Orthogonal || mode === ConnectorMode.Straight) {
+      const points = path.map<IVec>(p => p.toVec());
       const p = Polyline.nearestPoint(points, point);
       const pl = Polyline.lenAtPoint(points, p);
       const fl = Polyline.len(points);
       return pl / fl;
     }
 
-    return getBezierNearestPoint(path, point).t;
+    const lenAtPoint = getBezierCurveLenAtPoint(path, point);
+    const fullLen = getBezierCurveLen(path);
+    return lenAtPoint / fullLen;
   }
 
   /**
@@ -293,12 +282,6 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   getPointByOffsetDistance(offsetDistance = 0.5, bounds?: Bound): IVec {
     const { mode, absolutePath: path } = this;
 
-    if (mode === ConnectorMode.Straight) {
-      const first = path[0];
-      const last = path[path.length - 1];
-      return Vec.lrp(first, last, offsetDistance);
-    }
-
     let { x, y, w, h } = this;
     if (bounds) {
       x = bounds.x;
@@ -307,19 +290,15 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       h = bounds.h;
     }
 
-    if (mode === ConnectorMode.Orthogonal) {
-      const points = path.map<IVec>(p => [p[0], p[1]]);
+    if (mode === ConnectorMode.Orthogonal || mode === ConnectorMode.Straight) {
+      const points = path.map<IVec>(p => p.toVec());
       const point = Polyline.pointAt(points, offsetDistance);
       if (point) return point;
       return [x + w / 2, y + h / 2];
     }
 
-    for (let i = 1; i < path.length; i++) {
-      const b = getBezierParameters([path[i - 1], path[i]]);
-      const point = getBezierPoint(b, offsetDistance);
-
-      if (point) return point;
-    }
+    const point = getPointAtBezierLine(path, offsetDistance);
+    if (point) return point;
 
     return [x + w / 2, y + h / 2];
   }

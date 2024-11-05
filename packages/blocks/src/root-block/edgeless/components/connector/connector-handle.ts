@@ -10,12 +10,13 @@ import {
 } from '@blocksuite/affine-model';
 import {
   Bound,
+  debounce,
   DisposableGroup,
   getBoundsWithRotation,
   Vec,
   WithDisposable,
 } from '@blocksuite/global/utils';
-import { css, html, LitElement } from 'lit';
+import { css, html, LitElement, nothing } from 'lit';
 import { property, query, queryAll } from 'lit/decorators.js';
 import { type StyleInfo, styleMap } from 'lit/directives/style-map.js';
 
@@ -56,12 +57,30 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     }
   `;
 
+  private _disposeEvents = debounce(() => {
+    if (!this._isMoving) {
+      console.debug('_disposeEvents');
+      this._disposables.dispose();
+      this._disposables = new DisposableGroup();
+      this._bindEvent();
+    }
+  }, 200);
+
+  private _isMoving = false;
+
   private _lastZoom = 1;
 
   private _bindEvent() {
     const { edgeless, connector } = this;
-    const { surface } = edgeless.service;
 
+    this._disposables.add(
+      edgeless.service.surface.elementUpdated.on(({ id }) => {
+        if (id === connector.id) {
+          this.requestUpdate();
+          this._disposeEvents();
+        }
+      })
+    );
     this._anchorHandlers.forEach(middleElement => {
       this._disposables.addFromEvent(
         middleElement as HTMLDivElement,
@@ -83,18 +102,12 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     this._disposables.add(() => {
       edgeless.service.connectorOverlay.clear();
     });
-    this._disposables.add(
-      surface.elementUpdated.on(({ id, props }) => {
-        if (id === connector.id && props['points']) {
-          this.requestUpdate();
-        }
-      })
-    );
   }
 
   private _capPointerDown(e: PointerEvent, connection: 'target' | 'source') {
     const { edgeless, connector, _disposables } = this;
     const { service } = edgeless;
+    this._isMoving = true;
 
     connector.stashRapidlyFields();
 
@@ -104,14 +117,20 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       const isStartPointer = connection === 'source';
       const otherSideId = connector[isStartPointer ? 'target' : 'source'].id;
 
-      connector[connection] = edgeless.service.connectorOverlay.renderConnector(
-        point,
-        otherSideId ? [otherSideId] : []
-      );
+      service.doc.transact(() => {
+        connector[connection] =
+          edgeless.service.connectorOverlay.renderConnector(
+            point,
+            otherSideId ? [otherSideId] : []
+          );
+      });
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
-      connector.popRapidlyFields();
+      this._isMoving = false;
+      service.doc.transact(() => {
+        connector.popRapidlyFields();
+      });
       this._disposePointerup();
     });
   }
@@ -120,6 +139,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     const { edgeless, connector, _disposables } = this;
     const { service } = edgeless;
     e.stopPropagation();
+    this._isMoving = true;
 
     connector.stash('xywh');
     connector.stash('labelXYWH');
@@ -145,12 +165,14 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
         const index = Number(anchorElement?.getAttribute('data-point-id'));
 
-        movingIndex = ConnectorPathGenerator.movePoint(
-          connector,
-          elementGetter,
-          index,
-          point
-        );
+        service.doc.transact(() => {
+          movingIndex = ConnectorPathGenerator.movePoint(
+            connector,
+            elementGetter,
+            index,
+            point
+          );
+        });
 
         return;
       }
@@ -197,10 +219,13 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
       movingAnchor = undefined;
       movingAnchorSelector = undefined;
       movingIndex = Number.NaN;
-      ConnectorPathGenerator.removeExtraPoints(connector);
-      connector.pop('xywh');
-      connector.pop('labelXYWH');
-      connector.pop('points');
+      this._isMoving = false;
+      service.doc.transact(() => {
+        ConnectorPathGenerator.removeExtraPoints(connector);
+        connector.pop('xywh');
+        connector.pop('labelXYWH');
+        connector.pop('points');
+      });
       this._disposePointerup();
     });
   }
@@ -221,24 +246,23 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     const { service } = this.edgeless;
     const { zoom } = service.viewport;
 
-    if (mode === ConnectorMode.Orthogonal) {
-      return [];
-    }
-
-    return path.reduce<
-      {
-        transform: string;
-      }[]
-    >((acc, point, index) => {
+    return path.reduce<StyleInfo[]>((acc, point, index) => {
       if (index === 0 || index === path.length - 1) {
         return acc;
       }
 
       const domPoint = Vec.subScalar(Vec.mul(point, zoom), HALF_SIZE);
 
-      acc.push({
+      const styles: StyleInfo = {
         transform: `translate3d(${domPoint[0]}px,${domPoint[1]}px,0)`,
-      });
+        display: '',
+      };
+
+      if (this._isMoving || mode === ConnectorMode.Orthogonal) {
+        styles.display = 'none';
+      }
+
+      acc.push(styles);
 
       return acc;
     }, []);
@@ -278,29 +302,38 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           display: '',
         };
 
-        if (isOrthogonal && (index === 1 || index === path.length - 1)) {
-          const pointIndex = index === 1 ? index : index - 1;
-          const bound = index === 1 ? startBound : endBound;
-          const startEndPoint =
-            index === 1
-              ? absolutePath[0]
-              : absolutePath[absolutePath.length - 1];
-          const absolutePoint = absolutePath[pointIndex];
+        if (this._isMoving) {
+          styles.display = 'none';
+        } else if (isOrthogonal) {
+          const isEdge = index === 1 || index === path.length - 1;
+          if (isEdge) {
+            const pointIndex = index === 1 ? index : index - 1;
+            const bound = index === 1 ? startBound : endBound;
+            const startEndPoint =
+              index === 1
+                ? absolutePath[0]
+                : absolutePath[absolutePath.length - 1];
+            const absolutePoint = absolutePath[pointIndex];
 
-          const {
-            minX = startEndPoint[0],
-            minY = startEndPoint[1],
-            maxX = startEndPoint[0],
-            maxY = startEndPoint[1],
-          } = bound ?? {};
+            const {
+              minX = startEndPoint[0],
+              minY = startEndPoint[1],
+              maxX = startEndPoint[0],
+              maxY = startEndPoint[1],
+            } = bound ?? {};
 
-          const distToLeft = Math.abs(startEndPoint[0] - minX);
-          const distToRight = Math.abs(startEndPoint[0] - maxX);
-          const distToTop = Math.abs(startEndPoint[1] - minY);
-          const distToBottom = Math.abs(startEndPoint[1] - maxY);
-          const minDist =
-            Math.min(distToLeft, distToRight, distToTop, distToBottom) + 20.01;
-          if (Vec.dist(absolutePoint, startEndPoint) <= minDist) {
+            const distToLeft = Math.abs(startEndPoint[0] - minX);
+            const distToRight = Math.abs(startEndPoint[0] - maxX);
+            const distToTop = Math.abs(startEndPoint[1] - minY);
+            const distToBottom = Math.abs(startEndPoint[1] - maxY);
+            const minDist =
+              Math.min(distToLeft, distToRight, distToTop, distToBottom) +
+              40.02;
+            if (Vec.dist(absolutePoint, startEndPoint) <= minDist) {
+              styles.display = 'none';
+            }
+          }
+          if (Vec.dist(path[index], path[index - 1]) <= 20) {
             styles.display = 'none';
           }
         }
@@ -368,6 +401,10 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           this.connector.mode === ConnectorMode.Orthogonal &&
           ((beforeFreeze.x && afterFreeze.x) ||
             (beforeFreeze.y && afterFreeze.y));
+
+        if (style.display === 'none') {
+          return nothing;
+        }
 
         return html`<div
           style=${styleMap(style)}

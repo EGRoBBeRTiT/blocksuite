@@ -1223,16 +1223,33 @@ export class ConnectorPathGenerator {
     let lastIndexOnLine = 1;
     let lineDir = path[0][0] === path[1][0] ? 0 : 1;
     for (let i = 2; i < path.length; i++) {
-      if (path[i][lineDir] === path[i - 1][lineDir]) {
+      if (almostEqual(path[i][lineDir], path[i - 1][lineDir], 0.05)) {
         lastIndexOnLine = i;
         continue;
       }
       newPath.push(path[lastIndexOnLine]);
       lastIndexOnLine = i;
-      lineDir = Math.abs(lineDir - 1);
+      lineDir = path[i][0] === path[i - 1][0] ? 0 : 1;
     }
     newPath.push(path[lastIndexOnLine]);
     return newPath;
+  }
+
+  private static _resetPathIfNotOrthogonal(
+    connector: ConnectorElementModel | LocalConnectorElementModel
+  ) {
+    if (connector.mode === ConnectorMode.Orthogonal) {
+      const path = connector.path;
+      for (let i = 1; i < path.length - 1; i++) {
+        if (
+          !almostEqual(path[i][0], path[i - 1][0], 0.02) &&
+          !almostEqual(path[i][1], path[i - 1][1], 0.02)
+        ) {
+          connector.path = [path[0], path[path.length - 1]];
+          break;
+        }
+      }
+    }
   }
 
   private static _updateLabelXYWH(
@@ -1285,9 +1302,7 @@ export class ConnectorPathGenerator {
     absolutePoint: IVec
   ) {
     let newMovingIndex = movingIndex;
-
     let absolutePath = connector.absolutePath;
-
     const instance = new ConnectorPathGenerator({
       getElementById: elementGetter,
     });
@@ -1330,12 +1345,18 @@ export class ConnectorPathGenerator {
     }
     connector.points = points;
 
+    ConnectorPathGenerator._updateLabelXYWH(connector);
+
     return newMovingIndex;
   }
 
   static removeExtraPoints(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
+    if (connector.mode !== ConnectorMode.Orthogonal) {
+      return;
+    }
+
     const absolutePath = ConnectorPathGenerator._removeExtraPointsOnOneLine(
       connector.absolutePath
     );
@@ -1367,6 +1388,10 @@ export class ConnectorPathGenerator {
     connector: ConnectorElementModel | LocalConnectorElementModel,
     elementGetter: (id: string) => GfxModel | null
   ) {
+    if (connector.mode === ConnectorMode.Orthogonal && connector.modeUpdating) {
+      ConnectorPathGenerator._resetPathIfNotOrthogonal(connector);
+    }
+
     const instance = new ConnectorPathGenerator({
       getElementById: elementGetter,
     });
@@ -1374,8 +1399,6 @@ export class ConnectorPathGenerator {
 
     if (connector.mode === ConnectorMode.Curve) {
       if (connector.modeUpdating) {
-        connector.modeUpdating = false;
-
         // [1, 2, 3, ..., 0, length - 1]
         const indexes = absolutePath.map((_, i) => {
           if (i === absolutePath.length - 2) {
@@ -1425,7 +1448,14 @@ export class ConnectorPathGenerator {
       )
     ) {
       connector.points = newPoints;
+    } else {
+      connector.path = newPath;
     }
+
+    if (connector.modeUpdating) {
+      connector.modeUpdating = false;
+    }
+
     ConnectorPathGenerator._updateLabelXYWH(connector);
   }
 
@@ -1552,14 +1582,17 @@ export class ConnectorPathGenerator {
   private _generateConnectorPath(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
-    const { mode, path, x, y } = connector;
+    const {
+      mode,
+      path,
+      deserializedXYWH: [x, y],
+    } = connector;
     if (mode === ConnectorMode.Straight) {
       return this._generateStraightConnectorPath(connector);
     } else if (mode === ConnectorMode.Orthogonal) {
       const absolutePath = path.map(point =>
         point.clone().setVec(Vec.add(point, [x, y]))
       );
-
       const orthogonalPath = this.generateOrthogonalConnectorPath(
         connector,
         absolutePath
@@ -1581,9 +1614,9 @@ export class ConnectorPathGenerator {
       deserializedXYWH: [x, y],
     } = connector;
 
-    const betweenPoints = path
-      .slice(1, -1)
-      .map(point => point.clone().setVec(Vec.add(point, [x, y])));
+    const absolutePoints = path.map(point =>
+      point.clone().setVec(Vec.add(point, [x, y]))
+    );
 
     if (source.id || target.id) {
       let startPoint: PointLocation;
@@ -1630,7 +1663,8 @@ export class ConnectorPathGenerator {
           )
         );
       }
-      return [startPoint, ...betweenPoints, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
     } else {
       const endPoint = this._getConnectionPoint(connector, 'target');
       const startPoint = this._getConnectionPoint(connector, 'source');
@@ -1644,8 +1678,10 @@ export class ConnectorPathGenerator {
         startPoint.out = [0, Vec.mul(Vec.sub(endPoint, startPoint), 2 / 3)[1]];
         endPoint.in = [0, Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[1]];
       }
-      return [startPoint, ...betweenPoints, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
     }
+    return absolutePoints;
   }
 
   private _generateStraightConnectorPath(
@@ -1658,9 +1694,9 @@ export class ConnectorPathGenerator {
       deserializedXYWH: [x, y],
     } = connector;
 
-    const betweenPoints = path
-      .slice(1, -1)
-      .map(point => point.clone().setVec(Vec.add(point, [x, y])));
+    const absolutePoints = path.map(point =>
+      point.clone().setVec(Vec.add(point, [x, y]))
+    );
 
     if (source.id && !source.position && target.id && !target.position) {
       const start = this._getConnectorEndElement(
@@ -1675,14 +1711,18 @@ export class ConnectorPathGenerator {
       const eb = Bound.deserialize(end.xywh);
       const startPoint = getNearestConnectableAnchor(start, eb.center);
       const endPoint = getNearestConnectableAnchor(end, sb.center);
-      return [startPoint, ...betweenPoints, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
+      return absolutePoints;
     } else {
       const endPoint = this._getConnectionPoint(connector, 'target');
       const startPoint = this._getConnectionPoint(connector, 'source');
-      return (
-        (startPoint && endPoint && [startPoint, ...betweenPoints, endPoint]) ??
-        []
-      );
+      if (!startPoint || !endPoint) {
+        return [];
+      }
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
+      return absolutePoints;
     }
   }
 
@@ -1912,15 +1952,21 @@ export class ConnectorPathGenerator {
     let lastFreezedPointIndex = Number.NaN;
 
     path[0] = startPoint;
-    path[path.length - 1] = endPoint;
+    path[path.length - 1 || 1] = endPoint;
 
     for (let i = 0; i < path.length; i++) {
-      const first = path[i].freezedAxis;
-      const last = path[path.length - 1 - i].freezedAxis;
-      if (isNaN(firstFreezedPointIndex) && (first.x || first.y)) {
+      const firstFreezedAxis = path[i].freezedAxis;
+      const lastFreezedAxis = path[path.length - 1 - i].freezedAxis;
+      if (
+        isNaN(firstFreezedPointIndex) &&
+        (firstFreezedAxis.x || firstFreezedAxis.y)
+      ) {
         firstFreezedPointIndex = i;
       }
-      if (isNaN(lastFreezedPointIndex) && (last.x || last.y)) {
+      if (
+        isNaN(lastFreezedPointIndex) &&
+        (lastFreezedAxis.x || lastFreezedAxis.y)
+      ) {
         lastFreezedPointIndex = path.length - 1 - i;
       }
       if (!isNaN(firstFreezedPointIndex) && !isNaN(lastFreezedPointIndex)) {
@@ -1928,7 +1974,11 @@ export class ConnectorPathGenerator {
       }
     }
 
-    if (isNaN(firstFreezedPointIndex) || isNaN(lastFreezedPointIndex)) {
+    if (
+      isNaN(firstFreezedPointIndex) ||
+      isNaN(lastFreezedPointIndex) ||
+      firstFreezedPointIndex === lastFreezedPointIndex
+    ) {
       return this.generateSmallestOrthogonalConnectorPath({
         startPoint,
         endPoint,
@@ -2001,7 +2051,7 @@ export class ConnectorPathGenerator {
     }
 
     const pointOnLine = new PointLocation(
-      Vec.nearestPointOnLineSegment(line[0], line[1], point, false)
+      Vec.nearestPointOnLineSegment(start, end, point, false)
     );
     const outsideBoundPoint = Vec.add(
       point,

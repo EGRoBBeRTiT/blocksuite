@@ -1,3 +1,4 @@
+import { almostEqual } from './math.js';
 import { type IVec, Vec } from './model/index.js';
 
 export class Polyline {
@@ -24,14 +25,24 @@ export class Polyline {
 
   static lenAtPoint(points: IVec[], point: IVec) {
     const n = points.length;
-    let len = n;
+    let len = 0;
 
     for (let i = 0; i < n - 1; i++) {
       const a = points[i];
       const b = points[i + 1];
 
       // start
-      if (a[0] === point[0] && a[1] === point[1]) {
+      if (Vec.isEqual(a, point)) {
+        return len;
+      }
+
+      const pointOnLine = Vec.nearestPointOnLineSegment(a, b, point);
+
+      if (
+        almostEqual(point[0], pointOnLine[0], 0.02) &&
+        almostEqual(point[1], pointOnLine[1], 0.02)
+      ) {
+        len += Vec.dist(a, pointOnLine);
         return len;
       }
 

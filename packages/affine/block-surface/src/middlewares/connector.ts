@@ -1,10 +1,6 @@
+import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import type { GfxModel } from '@blocksuite/block-std/gfx';
 import type { XYTangentInOut } from '@blocksuite/global/utils';
-
-import {
-  type ConnectorElementModel,
-  ConnectorMode,
-} from '@blocksuite/affine-model';
 
 import type { SurfaceBlockModel, SurfaceMiddleware } from '../surface-model.js';
 
@@ -83,17 +79,6 @@ export const connectorMiddleware: SurfaceMiddleware = (
 
         if (props['mode'] !== undefined) {
           connector.modeUpdating = true;
-
-          if (connector.mode === ConnectorMode.Orthogonal) {
-            const path = connector.path;
-            const points = connector.points;
-            for (let i = 2; i < path.length - 3; i++) {
-              if (!path[i].freezedAxis.x && !path[i].freezedAxis.y) {
-                connector.path = [path[0], path[points.length - 1]];
-                break;
-              }
-            }
-          }
           addToUpdateList(connector);
         }
       }
