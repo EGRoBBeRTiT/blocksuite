@@ -1,8 +1,8 @@
 import { GfxLocalElementModel } from '@blocksuite/block-std/gfx';
 import {
   PointLocation,
+  type SerializedPointLocation,
   type SerializedXYWH,
-  type XYTangentInOut,
 } from '@blocksuite/global/utils';
 
 import type { Connection } from './connector.js';
@@ -35,8 +35,6 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   modeUpdating = false;
 
-  points: XYTangentInOut[] = [];
-
   rearEndpointStyle!: PointStyle;
 
   rotate: number = 0;
@@ -46,6 +44,8 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
   roughness: number = DEFAULT_ROUGHNESS;
 
   seed: number = Math.random();
+
+  serializedPath: SerializedPointLocation[] = [];
 
   source: Connection = {
     position: [0, 0],
@@ -65,7 +65,7 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   get path(): PointLocation[] {
     if (!this._path || !this._path.length) {
-      this.path = this.points.map(p => new PointLocation(...p));
+      this.path = this.serializedPath.map(PointLocation.fromSerialized);
     }
     return this._path;
   }

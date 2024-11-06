@@ -1,21 +1,20 @@
+import type { BooleanNumber } from '../types.js';
+
 import { type IVec, Vec } from './vec.js';
 
-export type XYTangentInOut = [
-  IVec, // XY
-  IVec, // Tangent
-  IVec, // In
-  IVec, // Out
-  number, // x, 0 - false, 1 - true
-  number, // y, 0 - false, 1 - true
-];
+export type SerializedPointLocation = {
+  xy: IVec;
+  tangent: IVec;
+  inVec: IVec;
+  outVec: IVec;
+  lockedAxises: [BooleanNumber, BooleanNumber];
+};
 
 /**
  * PointLocation is an implementation of IVec with in/out vectors and tangent.
  * This is useful when dealing with path.
  */
 export class PointLocation extends Array<number> implements IVec {
-  private _freezedAxis = { x: false, y: false };
-
   _in: IVec = [0, 0];
 
   _out: IVec = [0, 0];
@@ -27,16 +26,14 @@ export class PointLocation extends Array<number> implements IVec {
 
   [1]: number;
 
+  freezedAxises: [boolean, boolean] = [false, false];
+
   get absIn() {
     return Vec.add(this, this._in);
   }
 
   get absOut() {
     return Vec.add(this, this._out);
-  }
-
-  get freezedAxis() {
-    return { ...this._freezedAxis };
   }
 
   get in() {
@@ -72,8 +69,7 @@ export class PointLocation extends Array<number> implements IVec {
     tangent: IVec = [0, 0],
     inVec: IVec = [0, 0],
     outVec: IVec = [0, 0],
-    freezedX?: number,
-    freezedY?: number
+    freezedAxises?: [number | boolean, number | boolean]
   ) {
     super(2);
     this[0] = point[0];
@@ -81,9 +77,17 @@ export class PointLocation extends Array<number> implements IVec {
     this._tangent = tangent;
     this._in = inVec;
     this._out = outVec;
+    this.freezedAxises = [!!freezedAxises?.[0], !!freezedAxises?.[1]];
+  }
 
-    this._freezedAxis.x = !!freezedX;
-    this._freezedAxis.y = !!freezedY;
+  static fromSerialized({
+    xy,
+    tangent,
+    inVec,
+    outVec,
+    lockedAxises,
+  }: SerializedPointLocation) {
+    return new PointLocation(xy, tangent, inVec, outVec, lockedAxises);
   }
 
   static fromVec(vec: IVec) {
@@ -99,17 +103,21 @@ export class PointLocation extends Array<number> implements IVec {
       this._tangent,
       this._in,
       this._out,
-      +this._freezedAxis.x,
-      +this._freezedAxis.y
+      this.freezedAxises
     );
   }
 
-  setFreezedAxis(x: boolean, y?: boolean) {
-    this._freezedAxis.x = x;
-
-    if (typeof y === 'boolean') {
-      this._freezedAxis.y = y;
-    }
+  serialize(): SerializedPointLocation {
+    return {
+      xy: this.toVec(),
+      tangent: this._tangent,
+      inVec: this._in,
+      outVec: this._out,
+      lockedAxises: [
+        this.freezedAxises[0] ? 1 : 0,
+        this.freezedAxises[1] ? 1 : 0,
+      ],
+    };
   }
 
   setVec(vec: IVec) {
@@ -120,16 +128,5 @@ export class PointLocation extends Array<number> implements IVec {
 
   toVec(): IVec {
     return [this[0], this[1]];
-  }
-
-  toXYTangentInOut(): XYTangentInOut {
-    return [
-      [this[0], this[1]],
-      [...this._tangent],
-      [...this._in],
-      [...this._out],
-      +this._freezedAxis.x,
-      +this._freezedAxis.y,
-    ];
   }
 }

@@ -3,7 +3,7 @@ import type {
   IBound,
   IVec,
   IVec3,
-  XYTangentInOut,
+  SerializedPointLocation,
 } from '@blocksuite/global/utils';
 
 import {
@@ -1199,13 +1199,13 @@ export class ConnectorPathGenerator {
 
     const { path, points } = absolutePath.reduce<{
       path: PointLocation[];
-      points: XYTangentInOut[];
+      points: SerializedPointLocation[];
     }>(
       (acc, p: PointLocation) => {
         const point = p.clone().setVec(Vec.sub(p, [bound.x, bound.y]));
 
         acc.path.push(point);
-        acc.points.push(point.toXYTangentInOut());
+        acc.points.push(point.serialize());
 
         return acc;
       },
@@ -1321,7 +1321,6 @@ export class ConnectorPathGenerator {
 
     if (isCurve || isStraight) {
       absolutePath[movingIndex].setVec(absolutePoint);
-      absolutePath[movingIndex].setFreezedAxis(false, false);
 
       if (isCurve) {
         instance._autoSetAnchorControlPoints(
@@ -1343,7 +1342,7 @@ export class ConnectorPathGenerator {
     if (newXYWH !== connector.xywh) {
       connector.xywh = bound.serialize();
     }
-    connector.points = points;
+    connector.serializedPath = points;
 
     ConnectorPathGenerator._updateLabelXYWH(connector);
 
@@ -1372,16 +1371,16 @@ export class ConnectorPathGenerator {
       connector.xywh = bound.serialize();
     }
 
-    connector.points = newPoints;
+    connector.serializedPath = newPoints;
 
     ConnectorPathGenerator._updateLabelXYWH(connector);
   }
 
   static updatePath(
     connector: ConnectorElementModel | LocalConnectorElementModel,
-    points: XYTangentInOut[]
+    points: SerializedPointLocation[]
   ) {
-    connector.path = points.map(point => new PointLocation(...point));
+    connector.path = points.map(PointLocation.fromSerialized);
   }
 
   static updatePathEnds(
@@ -1441,13 +1440,13 @@ export class ConnectorPathGenerator {
     }
 
     if (
-      !isEqual(newPoints[0], connector.points[0]) ||
+      !isEqual(newPoints[0], connector.serializedPath[0]) ||
       !isEqual(
         newPoints[newPath.length - 1],
-        connector.points[connector.points.length - 1]
+        connector.serializedPath[connector.serializedPath.length - 1]
       )
     ) {
-      connector.points = newPoints;
+      connector.serializedPath = newPoints;
     } else {
       connector.path = newPath;
     }
@@ -1491,7 +1490,7 @@ export class ConnectorPathGenerator {
     if (newXYWH !== connector.xywh) {
       connector.xywh = bound.serialize();
     }
-    connector.points = points;
+    connector.serializedPath = points;
     ConnectorPathGenerator._updateLabelXYWH(connector);
   }
 
@@ -1783,12 +1782,9 @@ export class ConnectorPathGenerator {
         : null;
       const endLinePoint = new PointLocation(endPoint);
       endLinePoint[movingDir] = absolutePoint[movingDir];
-      endLinePoint.setFreezedAxis(movingDir === 0, movingDir === 1);
+      endLinePoint.freezedAxises[movingDir] = true;
       before[movingDir] = absolutePoint[movingDir];
-      before.setFreezedAxis(
-        before.freezedAxis.x || movingDir === 0,
-        before.freezedAxis.y || movingDir === 1
-      );
+      before.freezedAxises[movingDir] = true;
       const pathToLine = this.generateOrthogonalConnectorPathToLine({
         point: endPoint,
         bound: endBound,
@@ -1814,12 +1810,9 @@ export class ConnectorPathGenerator {
         : null;
       const startLinePoint = new PointLocation(startPoint);
       startLinePoint[movingDir] = absolutePoint[movingDir];
-      startLinePoint.setFreezedAxis(movingDir === 0, movingDir === 1);
+      startLinePoint.freezedAxises[movingDir] = true;
       after[movingDir] = absolutePoint[movingDir];
-      after.setFreezedAxis(
-        after.freezedAxis.x || movingDir === 0,
-        after.freezedAxis.y || movingDir === 1
-      );
+      after.freezedAxises[movingDir] = true;
       const pathToLine = this.generateOrthogonalConnectorPathToLine({
         point: startPoint,
         bound: startBound,
@@ -1841,14 +1834,8 @@ export class ConnectorPathGenerator {
     if (movingIndex > 0 && movingIndex < absolutePath.length - 2) {
       before[movingDir] = absolutePoint[movingDir];
       after[movingDir] = absolutePoint[movingDir];
-      before.setFreezedAxis(
-        before.freezedAxis.x || movingDir === 0,
-        before.freezedAxis.y || movingDir === 1
-      );
-      after.setFreezedAxis(
-        after.freezedAxis.x || movingDir === 0,
-        after.freezedAxis.y || movingDir === 1
-      );
+      before.freezedAxises[movingDir] = true;
+      after.freezedAxises[movingDir] = true;
     }
 
     // 0: x, 1: y
@@ -1955,17 +1942,17 @@ export class ConnectorPathGenerator {
     path[path.length - 1 || 1] = endPoint;
 
     for (let i = 0; i < path.length; i++) {
-      const firstFreezedAxis = path[i].freezedAxis;
-      const lastFreezedAxis = path[path.length - 1 - i].freezedAxis;
+      const firstFreezedAxis = path[i].freezedAxises;
+      const lastFreezedAxis = path[path.length - 1 - i].freezedAxises;
       if (
         isNaN(firstFreezedPointIndex) &&
-        (firstFreezedAxis.x || firstFreezedAxis.y)
+        (firstFreezedAxis[0] || firstFreezedAxis[1])
       ) {
         firstFreezedPointIndex = i;
       }
       if (
         isNaN(lastFreezedPointIndex) &&
-        (lastFreezedAxis.x || lastFreezedAxis.y)
+        (lastFreezedAxis[0] || lastFreezedAxis[1])
       ) {
         lastFreezedPointIndex = path.length - 1 - i;
       }
@@ -2033,9 +2020,9 @@ export class ConnectorPathGenerator {
     const end = line[1].clone();
 
     if (Vec.isEqual(start, end)) {
-      if (start.freezedAxis.x && end.freezedAxis.x) {
+      if (start.freezedAxises[0] && end.freezedAxises[0]) {
         end.setVec([end[0], end[1] + 10]);
-      } else if (start.freezedAxis.y && end.freezedAxis.y) {
+      } else if (start.freezedAxises[1] && end.freezedAxises[1]) {
         end.setVec([end[0] + 10, end[1]]);
       }
     }
@@ -2046,7 +2033,7 @@ export class ConnectorPathGenerator {
       const pointOnLine = new PointLocation(
         Vec.nearestPointOnLineSegment(start, end, point, false)
       );
-      pointOnLine.setFreezedAxis(lineDir === 0, lineDir === 1);
+      pointOnLine.freezedAxises[lineDir] = true;
       return [point, pointOnLine];
     }
 
@@ -2078,7 +2065,7 @@ export class ConnectorPathGenerator {
     }
 
     path[path.length - 1][lineDir] = start[lineDir];
-    path[path.length - 1].setFreezedAxis(lineDir === 0, lineDir === 1);
+    path[path.length - 1].freezedAxises[lineDir] = true;
 
     return path;
   }

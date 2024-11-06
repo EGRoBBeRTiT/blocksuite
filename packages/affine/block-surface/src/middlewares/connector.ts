@@ -1,6 +1,6 @@
 import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import type { GfxModel } from '@blocksuite/block-std/gfx';
-import type { XYTangentInOut } from '@blocksuite/global/utils';
+import type { SerializedPointLocation } from '@blocksuite/global/utils';
 
 import type { SurfaceBlockModel, SurfaceMiddleware } from '../surface-model.js';
 
@@ -74,11 +74,10 @@ export const connectorMiddleware: SurfaceMiddleware = (
       if (isConnector) {
         const connector = element as ConnectorElementModel;
 
-        console.debug('[update]', props);
-        if (props['points']) {
+        if (props['serializedPath']) {
           ConnectorPathGenerator.updatePath(
             connector,
-            props['points'] as XYTangentInOut[]
+            props['serializedPath'] as SerializedPointLocation[]
           );
         }
 

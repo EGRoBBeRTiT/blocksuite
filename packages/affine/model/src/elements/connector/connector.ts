@@ -5,8 +5,8 @@ import type {
 } from '@blocksuite/block-std/gfx';
 import type {
   IVec,
+  SerializedPointLocation,
   SerializedXYWH,
-  XYTangentInOut,
   XYWH,
 } from '@blocksuite/global/utils';
 
@@ -115,7 +115,7 @@ export type ConnectorElementProps = BaseElementProps & {
 export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorElementProps> {
   static #_rapidlyChangingFields = [
     'labelXYWH',
-    'points',
+    'serializedPath',
     'xywh',
     'connection',
   ];
@@ -147,7 +147,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
   get path() {
     if (!this.#_path || !this.#_path.length) {
-      this.path = this.points.map(p => new PointLocation(...p));
+      this.path = this.serializedPath.map(PointLocation.fromSerialized);
     }
 
     return this.#_path;
@@ -380,8 +380,8 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
     // the property assignment order matters
     this.xywh = bounds.serialize();
-    this.points = path.map(p =>
-      p.clone().setVec(Vec.sub(p, bounds.tl)).toXYTangentInOut()
+    this.serializedPath = path.map(p =>
+      p.clone().setVec(Vec.sub(p, bounds.tl)).serialize()
     );
 
     const props: {
@@ -507,9 +507,6 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor mode: ConnectorMode = ConnectorMode.Orthogonal;
 
-  @field([] as XYTangentInOut[])
-  accessor points: XYTangentInOut[] = [];
-
   @field('Arrow' as PointStyle)
   accessor rearEndpointStyle!: PointStyle;
 
@@ -521,6 +518,9 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
   @field()
   accessor roughness: number = DEFAULT_ROUGHNESS;
+
+  @field([] as SerializedPointLocation[])
+  accessor serializedPath: SerializedPointLocation[] = [];
 
   @field()
   accessor stroke: Color = '#000000';

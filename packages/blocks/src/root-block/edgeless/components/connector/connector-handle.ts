@@ -59,7 +59,6 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
   private _disposeEvents = debounce(() => {
     if (!this._isMoving) {
-      console.debug('_disposeEvents');
       this._disposables.dispose();
       this._disposables = new DisposableGroup();
       this._bindEvent();
@@ -143,7 +142,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
     connector.stash('xywh');
     connector.stash('labelXYWH');
-    connector.stash('points');
+    connector.stash('serializedPath');
 
     let movingAnchor: Element | null | undefined = target?.classList.contains(
       'available'
@@ -226,7 +225,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
         ConnectorPathGenerator.removeExtraPoints(connector);
         connector.pop('xywh');
         connector.pop('labelXYWH');
-        connector.pop('points');
+        connector.pop('serializedPath');
       });
       this._disposePointerup();
     });
@@ -396,13 +395,15 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           ></div>`
       )}
       ${middlePointStyles.map((style, index) => {
-        const beforeFreeze = this.connector.absolutePath[index].freezedAxis;
-        const afterFreeze = this.connector.absolutePath[index + 1].freezedAxis;
+        const [beforeFreezedX, beforeFreezedY] =
+          this.connector.absolutePath[index].freezedAxises;
+        const [afterFreezedX, afterFreezedY] =
+          this.connector.absolutePath[index + 1].freezedAxises;
 
-        const isFreezedLine =
+        const isLineFreezed =
           this.connector.mode === ConnectorMode.Orthogonal &&
-          ((beforeFreeze.x && afterFreeze.x) ||
-            (beforeFreeze.y && afterFreeze.y));
+          ((beforeFreezedX && afterFreezedX) ||
+            (beforeFreezedY && afterFreezedY));
 
         if (style.display === 'none') {
           return nothing;
@@ -410,7 +411,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
 
         return html`<div
           style=${styleMap(style)}
-          class="line-anchor ${isFreezedLine ? 'freezed' : 'unavailable'}"
+          class="line-anchor ${isLineFreezed ? 'freezed' : 'unavailable'}"
           data-point-id=${index}
         ></div>`;
       })}
