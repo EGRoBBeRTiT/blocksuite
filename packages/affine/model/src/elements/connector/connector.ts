@@ -248,14 +248,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
       return Polyline.nearestPoint(points, point);
     }
 
-    try {
-      const { point: nearestPoint } = getBezierNearestPoint(path, point);
-
-      return nearestPoint;
-    } catch (_) {
-      const { x, y } = this;
-      return [x, y];
-    }
+    return getBezierNearestPoint(path, point).point;
   }
 
   /**

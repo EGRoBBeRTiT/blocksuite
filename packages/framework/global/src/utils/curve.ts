@@ -714,23 +714,21 @@ export function setBezierControlPoints(
   isStrictTargetDirection: boolean
 ) {
   // [1, 2, 3, ..., 0, length - 1]
-  const indexes = points.map((_, i) => {
+  points.forEach((_, i) => {
+    let index = i + 1;
+
     if (i === points.length - 2) {
-      return 0;
+      index = 0;
     }
     if (i === points.length - 1) {
-      return i;
+      index = i;
     }
-    return i + 1;
-  });
-
-  indexes.forEach(index =>
     setBezierControlPointsAtIndex(
       points,
       index,
       isStrictSourceDirection,
       isStrictTargetDirection,
       false
-    )
-  );
+    );
+  });
 }

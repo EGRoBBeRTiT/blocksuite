@@ -20,7 +20,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
     ((connector.target?.id && hasElementById(connector.target.id)) ||
       (!connector.target?.id && connector.target?.position));
 
-  const updateConnectorPoints = (connector: ConnectorElementModel) => {
+  const updateConnectorPathEnds = (connector: ConnectorElementModel) => {
     if (shouldUpdateConnectorPath(connector)) {
       ConnectorPathGenerator.updatePathEnds(connector, elementGetter);
     }
@@ -34,7 +34,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
     if (!pendingFlag) {
       pendingFlag = true;
       queueMicrotask(() => {
-        pendingList.forEach(updateConnectorPoints);
+        pendingList.forEach(updateConnectorPathEnds);
         pendingList.clear();
         pendingFlag = false;
       });
@@ -107,7 +107,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
   surface
     .getElementsByType('connector')
     .forEach(connector =>
-      updateConnectorPoints(connector as ConnectorElementModel)
+      updateConnectorPathEnds(connector as ConnectorElementModel)
     );
 
   return () => {
