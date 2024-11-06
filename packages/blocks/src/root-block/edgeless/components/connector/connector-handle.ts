@@ -195,12 +195,14 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
             ? Number(target?.getAttribute('data-point-id'))
             : movingIndex;
 
-          movingIndex = ConnectorPathGenerator.movePoint(
-            connector,
-            elementGetter,
-            index,
-            point
-          );
+          service.doc.transact(() => {
+            movingIndex = ConnectorPathGenerator.movePoint(
+              connector,
+              elementGetter,
+              index,
+              point
+            );
+          });
         } else {
           ConnectorPathGenerator.addPointIntoPath(
             connector,

@@ -1388,7 +1388,7 @@ export class ConnectorPathGenerator {
     connector: ConnectorElementModel | LocalConnectorElementModel,
     elementGetter: (id: string) => GfxModel | null
   ) {
-    if (connector.mode === ConnectorMode.Orthogonal && connector.modeUpdating) {
+    if (connector.modeUpdating && connector.mode === ConnectorMode.Orthogonal) {
       ConnectorPathGenerator._resetPathIfNotOrthogonal(connector);
     }
 

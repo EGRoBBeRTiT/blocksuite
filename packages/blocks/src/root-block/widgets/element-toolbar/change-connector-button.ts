@@ -293,11 +293,13 @@ export class EdgelessChangeConnectorButton extends WithDisposable(LitElement) {
     K extends keyof Omit<ConnectorElementProps, keyof ConnectorLabelProps>,
   >(key: K, value: ConnectorElementProps[K]) {
     this.doc.captureSync();
-    this.elements
-      .filter(notEqual(key, value))
-      .forEach(element =>
-        this.service.updateElement(element.id, { [key]: value })
-      );
+    this.doc.transact(() => {
+      this.elements
+        .filter(notEqual(key, value))
+        .forEach(element =>
+          this.service.updateElement(element.id, { [key]: value })
+        );
+    });
   }
 
   private _setConnectorRough(rough: boolean) {

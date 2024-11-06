@@ -12,7 +12,6 @@ import { ConnectorUtils, MindmapUtils } from '@blocksuite/affine-block-surface';
 import { focusTextModel } from '@blocksuite/affine-components/rich-text';
 import {
   ConnectorElementModel,
-  ConnectorMode,
   GroupElementModel,
   MindmapElementModel,
   ShapeElementModel,
@@ -386,15 +385,18 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
         ele.source?.id &&
         ele.target?.id
       ) {
-        if (ele.path.length > 2 && ele.mode !== ConnectorMode.Orthogonal) {
+        if (ele.path.length > 2) {
           return true;
         }
 
-        if (
-          this._toBeMoved.some(e => e.id === ele.source.id) &&
-          this._toBeMoved.some(e => e.id === ele.target.id)
-        ) {
-          return false;
+        let sourceMoving = false;
+        let targetMoving = false;
+        for (let i = 0; i < this._toBeMoved.length; i++) {
+          this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
+          this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
+          if (sourceMoving && targetMoving) {
+            return false;
+          }
         }
       }
       return true;
@@ -929,6 +931,7 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
 
         if (el instanceof ConnectorElementModel) {
           el.popRapidlyFields();
+          el.moving = false;
         }
 
         if (el instanceof MindmapElementModel) {
@@ -1092,6 +1095,16 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
           });
 
         if (ele instanceof ConnectorElementModel) {
+          let sourceMoving = !ele.source.id;
+          let targetMoving = !ele.target.id;
+          for (let i = 0; i < this._toBeMoved.length; i++) {
+            if (sourceMoving && targetMoving) {
+              break;
+            }
+            this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
+            this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
+          }
+          ele.moving = sourceMoving && targetMoving;
           ele.stashRapidlyFields();
         }
       });

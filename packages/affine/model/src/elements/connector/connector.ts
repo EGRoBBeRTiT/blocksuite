@@ -126,6 +126,8 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
 
   modeUpdating = false;
 
+  moving = false;
+
   // @ts-ignore
   override get connectable() {
     return false as const;

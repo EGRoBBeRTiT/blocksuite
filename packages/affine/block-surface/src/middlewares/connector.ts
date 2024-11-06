@@ -56,13 +56,25 @@ export const connectorMiddleware: SurfaceMiddleware = (
     surface.elementUpdated.on(({ id, props }) => {
       const element = elementGetter(id);
 
-      const connector = element as ConnectorElementModel;
+      const isConnector = 'type' in element && element.type === 'connector';
 
-      if (props['xywh'] || props['rotate']) {
-        surface.getConnectors(id).forEach(addToUpdateList);
+      if (!isConnector) {
+        if (props['rotate']) {
+          surface.getConnectors(id).forEach(addToUpdateList);
+        }
+        if (props['xywh']) {
+          surface.getConnectors(id).forEach(el => {
+            if (!el.moving) {
+              addToUpdateList(el);
+            }
+          });
+        }
       }
 
-      if ('type' in element && element.type === 'connector') {
+      if (isConnector) {
+        const connector = element as ConnectorElementModel;
+
+        console.debug('[update]', props);
         if (props['points']) {
           ConnectorPathGenerator.updatePath(
             connector,
