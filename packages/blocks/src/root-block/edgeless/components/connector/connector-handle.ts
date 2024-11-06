@@ -203,11 +203,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
             );
           });
         } else {
-          ConnectorPathGenerator.addPointIntoPath(
-            connector,
-            index + 1,
-            elementGetter
-          );
+          ConnectorPathGenerator.addPointIntoPath(connector, index + 1);
 
           movingAnchorSelector = `.line-anchor.available[data-point-id="${index + 1}"]`;
 

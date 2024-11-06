@@ -1,10 +1,4 @@
 import type { GfxController, GfxModel } from '@blocksuite/block-std/gfx';
-import type {
-  IBound,
-  IVec,
-  IVec3,
-  SerializedPointLocation,
-} from '@blocksuite/global/utils';
 
 import {
   type BrushElementModel,
@@ -15,11 +9,18 @@ import {
   type LocalConnectorElementModel,
 } from '@blocksuite/affine-model';
 import {
+  Bound,
+  type IBound,
+  type IVec,
+  type IVec3,
+  type SerializedPointLocation,
+  setBezierControlPoints,
+} from '@blocksuite/global/utils';
+import {
   almostEqual,
   assertEquals,
   assertExists,
   assertType,
-  Bound,
   clamp,
   getBoundFromPoints,
   getBoundsWithRotation,
@@ -32,6 +33,7 @@ import {
   lineIntersects,
   PI2,
   PointLocation,
+  setBezierControlPointsAtIndex,
   sign,
   toRadian,
   Vec,
@@ -1083,111 +1085,6 @@ export class ConnectorPathGenerator {
     ];
   }
 
-  // ? Mutate the input points
-  private static _autoSetClosedAnchorControlPoints(
-    points: PointLocation[],
-    pointIndex: number
-  ) {
-    const point = points[pointIndex];
-
-    if (!point || pointIndex < 1 || pointIndex > points.length - 2) {
-      return points;
-    }
-
-    const before = points[pointIndex - 1];
-    const after = points[pointIndex + 1];
-
-    const vectorToBefore = Vec.sub(before, point);
-    const vectorToAfter = Vec.sub(after, point);
-
-    const controlVector = Vec.normalize(
-      Vec.sub(Vec.normalize(vectorToBefore), Vec.normalize(vectorToAfter))
-    );
-
-    const controlBefore = Vec.mul(
-      controlVector,
-      (1 / 3) * Vec.len(vectorToBefore)
-    );
-    const controlAfter = Vec.mul(
-      controlVector,
-      (-1 / 3) * Vec.len(vectorToAfter)
-    );
-
-    point.in = controlBefore;
-    point.out = controlAfter;
-    point.tangent = Vec.normalize(controlAfter);
-
-    return points;
-  }
-
-  // ? Mutate the input points
-  private static _autoSetOpenedAnchorControlPoints(
-    points: PointLocation[],
-    pointIndex: number,
-    isStrictDirection = true
-  ) {
-    const point = points[pointIndex];
-
-    if (!point || (pointIndex !== 0 && pointIndex !== points.length - 1)) {
-      return points;
-    }
-
-    const isStart = pointIndex === 0;
-    const isEnd = pointIndex === points.length - 1;
-
-    if (isStrictDirection) {
-      if (isStart) {
-        const outLen = Vec.len(point.out);
-
-        const control = Vec.mul(
-          point.out,
-          Math.max(Vec.len(points[pointIndex + 1].in) / outLen, 50 / outLen)
-        );
-
-        point.out = control;
-
-        return points;
-      }
-
-      if (isEnd) {
-        const inLen = Vec.len(point.in);
-
-        const control = Vec.mul(
-          point.in,
-          Math.max(Vec.len(points[pointIndex - 1].out) / inLen, 50 / inLen)
-        );
-
-        point.in = control;
-
-        return points;
-      }
-    }
-
-    if (isStart) {
-      const control = Vec.mul(
-        Vec.sub(points[pointIndex + 1].absIn, point),
-        0.5
-      );
-
-      point.out = control;
-
-      return points;
-    }
-
-    if (isEnd) {
-      const control = Vec.mul(
-        Vec.sub(points[pointIndex - 1].absOut, point),
-        0.5
-      );
-
-      point.in = control;
-
-      return points;
-    }
-
-    return points;
-  }
-
   private static _getNewBound(
     connector: ConnectorElementModel | LocalConnectorElementModel,
     absolutePath: PointLocation[]
@@ -1197,22 +1094,20 @@ export class ConnectorPathGenerator {
         ? getEntireBezierCurveBoundingBox(absolutePath)
         : getBoundFromPoints(absolutePath);
 
-    const { path, points } = absolutePath.reduce<{
+    const { path, serializedPath } = absolutePath.reduce<{
       path: PointLocation[];
-      points: SerializedPointLocation[];
+      serializedPath: SerializedPointLocation[];
     }>(
       (acc, p: PointLocation) => {
         const point = p.clone().setVec(Vec.sub(p, [bound.x, bound.y]));
-
         acc.path.push(point);
-        acc.points.push(point.serialize());
-
+        acc.serializedPath.push(point.serialize());
         return acc;
       },
-      { path: [], points: [] }
+      { path: [], serializedPath: [] }
     );
 
-    return { bound, path, points };
+    return { bound, path, serializedPath };
   }
 
   private static _removeExtraPointsOnOneLine(path: PointLocation[]) {
@@ -1235,23 +1130,6 @@ export class ConnectorPathGenerator {
     return newPath;
   }
 
-  private static _resetPathIfNotOrthogonal(
-    connector: ConnectorElementModel | LocalConnectorElementModel
-  ) {
-    if (connector.mode === ConnectorMode.Orthogonal) {
-      const path = connector.path;
-      for (let i = 1; i < path.length - 1; i++) {
-        if (
-          !almostEqual(path[i][0], path[i - 1][0], 0.02) &&
-          !almostEqual(path[i][1], path[i - 1][1], 0.02)
-        ) {
-          connector.path = [path[0], path[path.length - 1]];
-          break;
-        }
-      }
-    }
-  }
-
   private static _updateLabelXYWH(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
@@ -1268,8 +1146,7 @@ export class ConnectorPathGenerator {
 
   static addPointIntoPath(
     connector: ConnectorElementModel | LocalConnectorElementModel,
-    insertIndex: number,
-    elementGetter: (id: string) => GfxModel | null
+    insertIndex: number
   ) {
     let newPath: PointLocation[] = connector.absolutePath;
 
@@ -1287,12 +1164,7 @@ export class ConnectorPathGenerator {
       );
     }
 
-    ConnectorPathGenerator.updatePoints(
-      connector,
-      newPath,
-      elementGetter,
-      insertIndex
-    );
+    ConnectorPathGenerator.updatePoints(connector, newPath, insertIndex);
   }
 
   static movePoint(
@@ -1323,15 +1195,16 @@ export class ConnectorPathGenerator {
       absolutePath[movingIndex].setVec(absolutePoint);
 
       if (isCurve) {
-        instance._autoSetAnchorControlPoints(
-          connector,
+        setBezierControlPointsAtIndex(
           absolutePath,
-          movingIndex
+          movingIndex,
+          !!connector.source.id,
+          !!connector.target.id
         );
       }
     }
 
-    const { bound, points } = ConnectorPathGenerator._getNewBound(
+    const { bound, serializedPath } = ConnectorPathGenerator._getNewBound(
       connector,
       absolutePath
     );
@@ -1342,7 +1215,7 @@ export class ConnectorPathGenerator {
     if (newXYWH !== connector.xywh) {
       connector.xywh = bound.serialize();
     }
-    connector.serializedPath = points;
+    connector.serializedPath = serializedPath;
 
     ConnectorPathGenerator._updateLabelXYWH(connector);
 
@@ -1360,7 +1233,7 @@ export class ConnectorPathGenerator {
       connector.absolutePath
     );
 
-    const { bound, points: newPoints } = ConnectorPathGenerator._getNewBound(
+    const { bound, serializedPath } = ConnectorPathGenerator._getNewBound(
       connector,
       absolutePath
     );
@@ -1371,7 +1244,7 @@ export class ConnectorPathGenerator {
       connector.xywh = bound.serialize();
     }
 
-    connector.serializedPath = newPoints;
+    connector.serializedPath = serializedPath;
 
     ConnectorPathGenerator._updateLabelXYWH(connector);
   }
@@ -1387,42 +1260,24 @@ export class ConnectorPathGenerator {
     connector: ConnectorElementModel | LocalConnectorElementModel,
     elementGetter: (id: string) => GfxModel | null
   ) {
-    if (connector.modeUpdating && connector.mode === ConnectorMode.Orthogonal) {
-      ConnectorPathGenerator._resetPathIfNotOrthogonal(connector);
-    }
-
     const instance = new ConnectorPathGenerator({
       getElementById: elementGetter,
     });
     const absolutePath = instance._generateConnectorPath(connector) ?? [];
 
-    if (connector.mode === ConnectorMode.Curve) {
-      if (connector.modeUpdating) {
-        // [1, 2, 3, ..., 0, length - 1]
-        const indexes = absolutePath.map((_, i) => {
-          if (i === absolutePath.length - 2) {
-            return 0;
-          }
-          if (i === absolutePath.length - 1) {
-            return i;
-          }
-          return i + 1;
-        });
+    if (connector.mode === ConnectorMode.Curve && absolutePath.length > 2) {
+      const hasSource = !!connector.source.id;
+      const hasTarget = !!connector.target.id;
 
-        indexes.forEach(index =>
-          instance._autoSetAnchorControlPoints(
-            connector,
-            absolutePath,
-            index,
-            false
-          )
-        );
+      if (connector.modeUpdating) {
+        setBezierControlPoints(absolutePath, hasSource, hasTarget);
       } else {
-        instance._autoSetAnchorControlPoints(connector, absolutePath, 0);
-        instance._autoSetAnchorControlPoints(
-          connector,
+        setBezierControlPointsAtIndex(absolutePath, 0, hasSource, hasTarget);
+        setBezierControlPointsAtIndex(
           absolutePath,
-          absolutePath.length - 1
+          absolutePath.length - 1,
+          hasSource,
+          hasTarget
         );
       }
     }
@@ -1430,7 +1285,7 @@ export class ConnectorPathGenerator {
     const {
       bound,
       path: newPath,
-      points: newPoints,
+      serializedPath,
     } = ConnectorPathGenerator._getNewBound(connector, absolutePath);
 
     const newXYWH = bound.serialize();
@@ -1440,13 +1295,13 @@ export class ConnectorPathGenerator {
     }
 
     if (
-      !isEqual(newPoints[0], connector.serializedPath[0]) ||
+      !isEqual(serializedPath[0], connector.serializedPath[0]) ||
       !isEqual(
-        newPoints[newPath.length - 1],
+        serializedPath[newPath.length - 1],
         connector.serializedPath[connector.serializedPath.length - 1]
       )
     ) {
-      connector.serializedPath = newPoints;
+      connector.serializedPath = serializedPath;
     } else {
       connector.path = newPath;
     }
@@ -1461,25 +1316,21 @@ export class ConnectorPathGenerator {
   static updatePoints(
     connector: ConnectorElementModel | LocalConnectorElementModel,
     absolutePath: PointLocation[],
-    elementGetter: (id: string) => GfxModel | null,
     updatedIndex?: number
   ) {
-    const instance = new ConnectorPathGenerator({
-      getElementById: elementGetter,
-    });
-
     if (
       connector.mode === ConnectorMode.Curve &&
       typeof updatedIndex === 'number'
     ) {
-      instance._autoSetAnchorControlPoints(
-        connector,
+      setBezierControlPointsAtIndex(
         absolutePath,
-        updatedIndex
+        updatedIndex,
+        !!connector.source.id,
+        !!connector.target.id
       );
     }
 
-    const { bound, points } = ConnectorPathGenerator._getNewBound(
+    const { bound, serializedPath } = ConnectorPathGenerator._getNewBound(
       connector,
       absolutePath
     );
@@ -1490,57 +1341,8 @@ export class ConnectorPathGenerator {
     if (newXYWH !== connector.xywh) {
       connector.xywh = bound.serialize();
     }
-    connector.serializedPath = points;
+    connector.serializedPath = serializedPath;
     ConnectorPathGenerator._updateLabelXYWH(connector);
-  }
-
-  // ? Mutate the input points
-  private _autoSetAnchorControlPoints(
-    connector: ConnectorElementModel | LocalConnectorElementModel,
-    points: PointLocation[],
-    pointIndex: number,
-    shouldChangeNeighbors = true
-  ) {
-    const point = points[pointIndex];
-    const isPointClosed = pointIndex > 0 && pointIndex < points.length - 1;
-    if (!point) {
-      return;
-    }
-    const updateNeighbors = () => {
-      if (shouldChangeNeighbors) {
-        const neighborIndexes = [pointIndex - 1, pointIndex + 1];
-        if (pointIndex === 2) {
-          neighborIndexes.push(0);
-        }
-        if (pointIndex === points.length - 3) {
-          neighborIndexes.push(points.length - 1);
-        }
-        neighborIndexes.forEach(index => {
-          this._autoSetAnchorControlPoints(connector, points, index, false);
-        });
-      }
-    };
-    if (isPointClosed) {
-      ConnectorPathGenerator._autoSetClosedAnchorControlPoints(
-        points,
-        pointIndex
-      );
-      updateNeighbors();
-    } else {
-      updateNeighbors();
-      const isStrictDirection =
-        (pointIndex === 0 &&
-          connector.source.id &&
-          this.options.getElementById(connector.source.id)) ||
-        (pointIndex === points.length - 1 &&
-          connector.target.id &&
-          this.options.getElementById(connector.target.id));
-      ConnectorPathGenerator._autoSetOpenedAnchorControlPoints(
-        points,
-        pointIndex,
-        !!isStrictDirection
-      );
-    }
   }
 
   private _computeStartEndPoint(
@@ -1661,6 +1463,15 @@ export class ConnectorPathGenerator {
             ) / 3
           )
         );
+      } else {
+        if (
+          Math.abs(endPoint[0] - startPoint[0]) >
+          Math.abs(endPoint[1] - startPoint[1])
+        ) {
+          endPoint.in = [Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[0], 0];
+        } else {
+          endPoint.in = [0, Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[1]];
+        }
       }
       absolutePoints[0] = startPoint;
       absolutePoints[absolutePoints.length - 1 || 1] = endPoint;

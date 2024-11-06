@@ -184,7 +184,7 @@ export class EdgelessConnectorLabelEditor extends WithDisposable(
             }
           }
 
-          connector.lableEditing = false;
+          connector.labelEditing = false;
 
           edgeless.service.selection.set({
             elements: [],
@@ -218,7 +218,7 @@ export class EdgelessConnectorLabelEditor extends WithDisposable(
           }
         );
 
-        connector.lableEditing = true;
+        connector.labelEditing = true;
       })
       .catch(console.error);
   }

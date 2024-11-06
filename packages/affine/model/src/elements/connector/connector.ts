@@ -11,16 +11,19 @@ import type {
 } from '@blocksuite/global/utils';
 
 import {
+  derive,
   field,
   GfxPrimitiveElementModel,
   local,
 } from '@blocksuite/block-std/gfx';
 import {
+  almostEqual,
   Bound,
   curveIntersects,
   getBezierCurveLen,
   getBezierCurveLenAtPoint,
   getBezierNearestPoint,
+  getBezierSvgPathFromPoints,
   getPointAtBezierLine,
   linePolylineIntersects,
   PointLocation,
@@ -113,14 +116,16 @@ export type ConnectorElementProps = BaseElementProps & {
 } & ConnectorLabelProps;
 
 export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorElementProps> {
-  static #_rapidlyChangingFields = [
+  static #rapidlyChangingFields = [
     'labelXYWH',
     'serializedPath',
     'xywh',
     'connection',
   ];
 
-  #_path: PointLocation[] = [];
+  #curveCommands = '';
+
+  #path: PointLocation[] = [];
 
   localUpdating = false;
 
@@ -137,6 +142,16 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
     return !!(this.source.id || this.target.id);
   }
 
+  /**
+   * The SVG path commands for the curve connector.
+   */
+  get curveCommands() {
+    if (!this.#curveCommands) {
+      this.#curveCommands = getBezierSvgPathFromPoints(this.path);
+    }
+    return this.#curveCommands;
+  }
+
   override get elementBound() {
     let bounds = super.elementBound;
     if (this.hasLabel()) {
@@ -146,19 +161,18 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   }
 
   get path() {
-    if (!this.#_path || !this.#_path.length) {
+    if (!this.#path || !this.#path.length) {
       this.path = this.serializedPath.map(PointLocation.fromSerialized);
     }
 
-    return this.#_path;
+    return this.#path;
   }
 
   set path(value: PointLocation[]) {
     const [x, y] = this.deserializedXYWH;
-
+    this.#curveCommands = '';
+    this.#path = value;
     this.absolutePath = value.map(p => p.clone().setVec(Vec.add(p, [x, y])));
-
-    this.#_path = value;
   }
 
   get source() {
@@ -312,7 +326,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   }
 
   hasLabel() {
-    return Boolean(!this.lableEditing && this.labelDisplay && this.labelXYWH);
+    return Boolean(!this.labelEditing && this.labelDisplay && this.labelXYWH);
   }
 
   override includesPoint(
@@ -370,7 +384,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   }
 
   popRapidlyFields() {
-    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+    ConnectorElementModel.#rapidlyChangingFields.forEach(field => {
       this.pop(field);
     });
   }
@@ -437,7 +451,7 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   }
 
   stashRapidlyFields() {
-    ConnectorElementModel.#_rapidlyChangingFields.forEach(field => {
+    ConnectorElementModel.#rapidlyChangingFields.forEach(field => {
       this.stash(field);
     });
   }
@@ -470,6 +484,12 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   accessor labelDisplay!: boolean;
 
   /**
+   * Local control display and hide, mainly used in editing scenarios.
+   */
+  @local()
+  accessor labelEditing: boolean = false;
+
+  /**
    * The offset property specifies the label along the connector path.
    */
   @field({
@@ -498,12 +518,21 @@ export class ConnectorElementModel extends GfxPrimitiveElementModel<ConnectorEle
   @field()
   accessor labelXYWH: XYWH | undefined = undefined;
 
-  /**
-   * Local control display and hide, mainly used in editing scenarios.
-   */
-  @local()
-  accessor lableEditing: boolean = false;
+  @derive((mode: ConnectorMode, instance: ConnectorElementModel) => {
+    if (mode === ConnectorMode.Orthogonal) {
+      const path = instance.path;
+      for (let i = 1; i < path.length - 1; i++) {
+        if (
+          !almostEqual(path[i][0], path[i - 1][0], 0.02) &&
+          !almostEqual(path[i][1], path[i - 1][1], 0.02)
+        ) {
+          return { path: [path[0], path[path.length - 1]] };
+        }
+      }
+    }
 
+    return {};
+  })
   @field()
   accessor mode: ConnectorMode = ConnectorMode.Orthogonal;
 
