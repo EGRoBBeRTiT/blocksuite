@@ -1,4 +1,16 @@
+import type { BooleanNumber } from '../types.js';
+
 import { type IVec, Vec } from './vec.js';
+
+export class SerializedPointLocation {
+  constructor(
+    public xy: IVec,
+    public tangent: IVec,
+    public inVec: IVec,
+    public outVec: IVec,
+    public lockedAxises: [BooleanNumber, BooleanNumber]
+  ) {}
+}
 
 /**
  * PointLocation is an implementation of IVec with in/out vectors and tangent.
@@ -15,6 +27,8 @@ export class PointLocation extends Array<number> implements IVec {
   [0]: number;
 
   [1]: number;
+
+  lockedAxises: [boolean, boolean] = [false, false];
 
   get absIn() {
     return Vec.add(this, this._in);
@@ -56,7 +70,8 @@ export class PointLocation extends Array<number> implements IVec {
     point: IVec = [0, 0],
     tangent: IVec = [0, 0],
     inVec: IVec = [0, 0],
-    outVec: IVec = [0, 0]
+    outVec: IVec = [0, 0],
+    lockedAxises?: [number | boolean, number | boolean]
   ) {
     super(2);
     this[0] = point[0];
@@ -64,6 +79,17 @@ export class PointLocation extends Array<number> implements IVec {
     this._tangent = tangent;
     this._in = inVec;
     this._out = outVec;
+    this.lockedAxises = [!!lockedAxises?.[0], !!lockedAxises?.[1]];
+  }
+
+  static fromSerialized({
+    xy,
+    tangent,
+    inVec,
+    outVec,
+    lockedAxises,
+  }: SerializedPointLocation) {
+    return new PointLocation(xy, tangent, inVec, outVec, lockedAxises);
   }
 
   static fromVec(vec: IVec) {
@@ -78,7 +104,18 @@ export class PointLocation extends Array<number> implements IVec {
       this as unknown as IVec,
       this._tangent,
       this._in,
-      this._out
+      this._out,
+      this.lockedAxises
+    );
+  }
+
+  serialize(): SerializedPointLocation {
+    return new SerializedPointLocation(
+      this.toVec(),
+      this._tangent,
+      this._in,
+      this._out,
+      [this.lockedAxises[0] ? 1 : 0, this.lockedAxises[1] ? 1 : 0]
     );
   }
 

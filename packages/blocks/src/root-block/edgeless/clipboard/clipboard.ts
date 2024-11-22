@@ -563,6 +563,8 @@ export class EdgelessClipboardController extends PageClipboard {
       } else if (target.position) {
         target.position = Vec.add(target.position, offset);
       }
+
+      clipboardData.xywh = newXYWH;
     } else {
       clipboardData.xywh = newXYWH;
     }

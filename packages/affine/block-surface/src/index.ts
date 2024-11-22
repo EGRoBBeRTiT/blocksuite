@@ -18,6 +18,7 @@ export {
   ConnectorEndpointLocations,
   ConnectorEndpointLocationsOnTriangle,
   ConnectorPathGenerator,
+  rBound,
 } from './managers/connector-manager.js';
 export { CanvasRenderer, Overlay } from './renderer/canvas-renderer.js';
 export * from './renderer/elements/group/consts.js';

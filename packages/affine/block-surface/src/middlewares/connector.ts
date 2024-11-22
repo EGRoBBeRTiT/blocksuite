@@ -12,16 +12,19 @@ export const connectorMiddleware: SurfaceMiddleware = (
     surface.hasElementById(id) || surface.doc.hasBlockById(id);
   const elementGetter = (id: string) =>
     surface.getElementById(id) ?? (surface.doc.getBlockById(id) as GfxModel);
-  const updateConnectorPath = (connector: ConnectorElementModel) => {
-    if (
-      ((connector.source?.id && hasElementById(connector.source.id)) ||
-        (!connector.source?.id && connector.source?.position)) &&
-      ((connector.target?.id && hasElementById(connector.target.id)) ||
-        (!connector.target?.id && connector.target?.position))
-    ) {
-      ConnectorPathGenerator.updatePath(connector, null, elementGetter);
+
+  const shouldUpdateConnectorPath = (connector: ConnectorElementModel) =>
+    ((connector.source?.id && hasElementById(connector.source.id)) ||
+      (!connector.source?.id && connector.source?.position)) &&
+    ((connector.target?.id && hasElementById(connector.target.id)) ||
+      (!connector.target?.id && connector.target?.position));
+
+  const updateConnectorPathEnds = (connector: ConnectorElementModel) => {
+    if (shouldUpdateConnectorPath(connector)) {
+      ConnectorPathGenerator.updatePathEnds(connector, elementGetter);
     }
   };
+
   const pendingList = new Set<ConnectorElementModel>();
   let pendingFlag = false;
   const addToUpdateList = (connector: ConnectorElementModel) => {
@@ -30,7 +33,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
     if (!pendingFlag) {
       pendingFlag = true;
       queueMicrotask(() => {
-        pendingList.forEach(updateConnectorPath);
+        pendingList.forEach(updateConnectorPathEnds);
         pendingList.clear();
         pendingFlag = false;
       });
@@ -44,7 +47,10 @@ export const connectorMiddleware: SurfaceMiddleware = (
       if (!element) return;
 
       if ('type' in element && element.type === 'connector') {
-        addToUpdateList(element as ConnectorElementModel);
+        const connector = element as ConnectorElementModel;
+        if (connector.localUpdating) {
+          addToUpdateList(connector);
+        }
       } else {
         surface.getConnectors(id).forEach(addToUpdateList);
       }
@@ -52,19 +58,30 @@ export const connectorMiddleware: SurfaceMiddleware = (
     surface.elementUpdated.on(({ id, props }) => {
       const element = elementGetter(id);
 
-      if (props['xywh'] || props['rotate']) {
-        surface.getConnectors(id).forEach(addToUpdateList);
+      const isConnector = 'type' in element && element.type === 'connector';
+
+      if (!isConnector) {
+        if (props['rotate']) {
+          surface.getConnectors(id).forEach(addToUpdateList);
+        }
+        if (props['xywh']) {
+          surface.getConnectors(id).forEach(el => {
+            if (!el.moving) {
+              addToUpdateList(el);
+            }
+          });
+        }
       }
 
-      if (
-        'type' in element &&
-        element.type === 'connector' &&
-        (props['mode'] !== undefined ||
-          props['target'] ||
-          props['source'] ||
-          (props['xywh'] && !(element as ConnectorElementModel).updatingPath))
-      ) {
-        addToUpdateList(element as ConnectorElementModel);
+      if (isConnector) {
+        const connector = element as ConnectorElementModel;
+
+        if (props['source'] || props['target'] || props['mode'] !== undefined) {
+          if (connector.localUpdating) {
+            addToUpdateList(connector);
+            connector.localUpdating = false;
+          }
+        }
       }
     }),
     surface.doc.slots.blockUpdated.on(payload => {
@@ -80,7 +97,7 @@ export const connectorMiddleware: SurfaceMiddleware = (
   surface
     .getElementsByType('connector')
     .forEach(connector =>
-      updateConnectorPath(connector as ConnectorElementModel)
+      updateConnectorPathEnds(connector as ConnectorElementModel)
     );
 
   return () => {

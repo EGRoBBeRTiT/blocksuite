@@ -385,11 +385,18 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
         ele.source?.id &&
         ele.target?.id
       ) {
-        if (
-          this._toBeMoved.some(e => e.id === ele.source.id) &&
-          this._toBeMoved.some(e => e.id === ele.target.id)
-        ) {
-          return false;
+        if (ele.path.length > 2) {
+          return true;
+        }
+
+        let sourceMoving = false;
+        let targetMoving = false;
+        for (let i = 0; i < this._toBeMoved.length; i++) {
+          this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
+          this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
+          if (sourceMoving && targetMoving) {
+            return false;
+          }
         }
       }
       return true;
@@ -916,8 +923,15 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
           el.pop('xywh');
         });
 
+        this.edgelessSelectionManager.surfaceModel
+          .getConnectors(el.id)
+          .forEach(connector => {
+            connector.popRapidlyFields();
+          });
+
         if (el instanceof ConnectorElementModel) {
-          el.pop('labelXYWH');
+          el.popRapidlyFields();
+          el.moving = false;
         }
 
         if (el instanceof MindmapElementModel) {
@@ -1074,8 +1088,24 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
       this._toBeMoved.forEach(ele => {
         ele.stash('xywh');
 
+        this.edgelessSelectionManager.surfaceModel
+          .getConnectors(ele.id)
+          .forEach(connector => {
+            connector.stashRapidlyFields();
+          });
+
         if (ele instanceof ConnectorElementModel) {
-          ele.stash('labelXYWH');
+          let sourceMoving = !ele.source.id;
+          let targetMoving = !ele.target.id;
+          for (let i = 0; i < this._toBeMoved.length; i++) {
+            this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
+            this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
+            if (sourceMoving && targetMoving) {
+              break;
+            }
+          }
+          ele.moving = sourceMoving && targetMoving;
+          ele.stashRapidlyFields();
         }
       });
     }

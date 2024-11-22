@@ -1,5 +1,4 @@
 import type { GfxController, GfxModel } from '@blocksuite/block-std/gfx';
-import type { IBound, IVec, IVec3 } from '@blocksuite/global/utils';
 
 import {
   type BrushElementModel,
@@ -7,19 +6,28 @@ import {
   ConnectorElementModel,
   ConnectorMode,
   GroupElementModel,
-  type LocalConnectorElementModel,
+  LocalConnectorElementModel,
 } from '@blocksuite/affine-model';
+import {
+  Bound,
+  getFirstLastLockedPointIndex,
+  type IBound,
+  isEqual,
+  type IVec,
+  type IVec3,
+  removeExtraPointsOnOneLine,
+  type SerializedPointLocation,
+  setBezierControlPoints,
+} from '@blocksuite/global/utils';
 import {
   almostEqual,
   assertEquals,
   assertExists,
   assertType,
-  Bound,
   clamp,
-  getBezierCurveBoundingBox,
-  getBezierParameters,
   getBoundFromPoints,
   getBoundsWithRotation,
+  getEntireBezierCurveBoundingBox,
   getPointFromBoundsWithRotation,
   isOverlap,
   isVecZero,
@@ -27,6 +35,7 @@ import {
   lineIntersects,
   PI2,
   PointLocation,
+  setBezierControlPointsAtIndex,
   sign,
   toRadian,
   Vec,
@@ -45,6 +54,12 @@ export type OrthogonalConnectorInput = {
   endBound: Bound | null;
   startPoint: PointLocation;
   endPoint: PointLocation;
+};
+
+export type OrthogonalConnectorToLineInput = {
+  point: PointLocation;
+  bound: Bound | null;
+  line: [PointLocation, PointLocation];
 };
 
 export const ConnectorEndpointLocations: IVec[] = [
@@ -100,7 +115,7 @@ export function calculateNearestLocation(
     ) as IVec;
 }
 
-function rBound(ele: GfxModel, anti = false): IBound {
+export function rBound(ele: GfxModel, anti = false): IBound {
   const bound = Bound.deserialize(ele.xywh);
   return { ...bound, rotate: anti ? -ele.rotate : ele.rotate };
 }
@@ -818,6 +833,28 @@ function renderRect(
   ctx.closePath();
   ctx.restore();
 }
+function getAdjacentLine(
+  path: PointLocation[],
+  index: number,
+  dir: -1 | 1 | 0
+) {
+  if (index + dir < 0 || index + dir > path.length - 2) {
+    return {
+      line: [],
+      locked: false,
+      dir: -1,
+    };
+  }
+  const start = path[index + dir];
+  const end = path[index + 1 + dir];
+  return {
+    line: [start, end] as [PointLocation, PointLocation],
+    locked:
+      (start.lockedAxises[0] && end.lockedAxises[0]) ||
+      (start.lockedAxises[1] && end.lockedAxises[1]),
+    dir: start[0] === end[0] ? 0 : start[1] === end[1] ? 1 : -1,
+  };
+}
 
 export class ConnectionOverlay extends Overlay {
   highlightPoint: IVec | null = null;
@@ -999,7 +1036,7 @@ export class ConnectionOverlay extends Overlay {
     // at last, if not, just return the point
     if (!result) {
       result = {
-        position: point as IVec,
+        position: point,
       };
     }
 
@@ -1018,28 +1055,171 @@ export class ConnectorPathGenerator {
     }
   ) {}
 
-  static updatePath(
+  private static _getNewBound(
     connector: ConnectorElementModel | LocalConnectorElementModel,
-    path: PointLocation[] | null | null,
-    elementGetter?: (id: string) => GfxModel | null
+    absolutePath: PointLocation[]
   ) {
-    const instance = new ConnectorPathGenerator({
-      getElementById: elementGetter ?? (() => null),
-    });
-    const points = path ?? instance._generateConnectorPath(connector) ?? [];
     const bound =
       connector.mode === ConnectorMode.Curve
-        ? getBezierCurveBoundingBox(getBezierParameters(points))
-        : getBoundFromPoints(points);
-    const relativePoints = points.map((p: PointLocation) => {
-      return p.setVec(Vec.sub(p, [bound.x, bound.y]));
+        ? getEntireBezierCurveBoundingBox(absolutePath)
+        : getBoundFromPoints(absolutePath);
+
+    const { path, serializedPath } = absolutePath.reduce<{
+      path: PointLocation[];
+      serializedPath: SerializedPointLocation[];
+    }>(
+      (acc, p: PointLocation) => {
+        const point = p.clone().setVec(Vec.sub(p, [bound.x, bound.y]));
+        acc.path.push(point);
+        acc.serializedPath.push(point.serialize());
+        return acc;
+      },
+      { path: [], serializedPath: [] }
+    );
+
+    return { bound, path, serializedPath };
+  }
+
+  private static _removeOrthogonalPoint(
+    connector: ConnectorElementModel,
+    movingIndex: number,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    const absolutePath = connector.absolutePath;
+
+    if (movingIndex === 0 || movingIndex === absolutePath.length - 2) {
+      return absolutePath;
+    }
+
+    const { locked: removingLineLocked } = getAdjacentLine(
+      absolutePath,
+      movingIndex,
+      0
+    );
+
+    if (!removingLineLocked) {
+      return absolutePath;
+    }
+
+    const instance = new ConnectorPathGenerator({
+      getElementById: elementGetter,
     });
 
-    connector.updatingPath = true;
-    // the property assignment order matters
-    connector.xywh = bound.serialize();
-    connector.path = relativePoints;
+    const { startPoint, startBound, endPoint, endBound } =
+      instance.getStartEndBounds(connector);
 
+    const {
+      line: prevLine,
+      locked: prevLineLocked,
+      dir: prevLineDir,
+    } = getAdjacentLine(absolutePath, movingIndex, -1);
+    const {
+      line: nextLine,
+      locked: nextLineLocked,
+      dir: nextLineDir,
+    } = getAdjacentLine(absolutePath, movingIndex, 1);
+
+    // If there is only one locked line
+    if (!prevLineLocked && !nextLineLocked) {
+      return instance
+        .generateSmallestOrthogonalConnectorPath({
+          startPoint,
+          endPoint,
+          startBound,
+          endBound,
+        })
+        .map(p => new PointLocation(p));
+    }
+
+    if (!prevLineLocked) {
+      const pointsToNextLine = instance.generateOrthogonalConnectorPathToLine({
+        point: startPoint,
+        bound: startBound,
+        line: nextLine as [PointLocation, PointLocation],
+      });
+      return pointsToNextLine.concat(absolutePath.slice(movingIndex + 2));
+    }
+
+    if (!nextLineLocked) {
+      const pointsToPrevLine = instance.generateOrthogonalConnectorPathToLine({
+        point: endPoint,
+        bound: endBound,
+        line: prevLine as [PointLocation, PointLocation],
+      });
+
+      return absolutePath
+        .slice(0, movingIndex)
+        .concat(pointsToPrevLine.reverse());
+    }
+
+    // If both prev and next lines are locked
+    const prevLineLen = Vec.dist2(prevLine[0], prevLine[1]);
+    const nextLineLen = Vec.dist2(nextLine[0], nextLine[1]);
+
+    if (prevLineLen <= nextLineLen) {
+      const {
+        line: prevPrevLine,
+        locked: prevPrevLineLocked,
+        dir: prevPrevLineDir,
+      } = getAdjacentLine(absolutePath, movingIndex - 1, -1);
+
+      if (!prevPrevLineLocked) {
+        const pointsToNextLine = instance.generateOrthogonalConnectorPathToLine(
+          {
+            point: startPoint,
+            bound: startBound,
+            line: nextLine as [PointLocation, PointLocation],
+          }
+        );
+
+        return pointsToNextLine.concat(absolutePath.slice(movingIndex + 2));
+      }
+
+      const point = new PointLocation([0, 0]);
+      point.lockedAxises[prevPrevLineDir] = true;
+      point.lockedAxises[nextLineDir] = true;
+
+      point[prevPrevLineDir] = prevPrevLine[1][prevPrevLineDir];
+      point[nextLineDir] = nextLine[0][nextLineDir];
+
+      return absolutePath
+        .slice(0, movingIndex - 1)
+        .concat([point], absolutePath.slice(movingIndex + 2));
+    }
+
+    const {
+      line: nextNextLine,
+      locked: nextNextLineLocked,
+      dir: nextNextLineDir,
+    } = getAdjacentLine(absolutePath, movingIndex + 1, 1);
+
+    if (!nextNextLineLocked) {
+      const pointsToPrevLine = instance.generateOrthogonalConnectorPathToLine({
+        point: endPoint,
+        bound: endBound,
+        line: prevLine as [PointLocation, PointLocation],
+      });
+
+      return absolutePath
+        .slice(0, movingIndex)
+        .concat(pointsToPrevLine.reverse());
+    }
+
+    const point = new PointLocation([0, 0]);
+    point.lockedAxises[nextNextLineDir] = true;
+    point.lockedAxises[prevLineDir] = true;
+
+    point[nextNextLineDir] = nextNextLine[1][nextNextLineDir];
+    point[prevLineDir] = prevLine[0][prevLineDir];
+
+    return absolutePath
+      .slice(0, movingIndex)
+      .concat([point], absolutePath.slice(movingIndex + 3));
+  }
+
+  private static _updateLabelXYWH(
+    connector: ConnectorElementModel | LocalConnectorElementModel
+  ) {
     // Updates Connector's Label position.
     if (isConnectorWithLabel(connector)) {
       const model = connector as ConnectorElementModel;
@@ -1049,8 +1229,259 @@ export class ConnectorPathGenerator {
       const [, , w, h] = model.labelXYWH!;
       model.labelXYWH = [cx - w / 2, cy - h / 2, w, h];
     }
+  }
 
-    connector.updatingPath = false;
+  private static _updatePath(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    absolutePath: PointLocation[]
+  ) {
+    const { bound, path, serializedPath } = ConnectorPathGenerator._getNewBound(
+      connector,
+      absolutePath
+    );
+    const newXYWH = bound.serialize();
+    // the property assignment order matters
+    if (newXYWH !== connector.xywh) {
+      connector.xywh = bound.serialize();
+    }
+    connector.path = path;
+    connector.serializedPath = serializedPath;
+    ConnectorPathGenerator._updateLabelXYWH(connector);
+  }
+
+  static addPointIntoPath(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    insertIndex: number
+  ) {
+    const isCurve = connector.mode === ConnectorMode.Curve;
+    const isStraight = connector.mode === ConnectorMode.Straight;
+
+    const absolutePath = connector.absolutePath;
+
+    if (
+      (!isCurve && !isStraight) ||
+      insertIndex < 1 ||
+      insertIndex > absolutePath.length - 1
+    ) {
+      return;
+    }
+
+    const before = absolutePath[insertIndex - 1];
+    const after = absolutePath[insertIndex];
+
+    const middleVec = isCurve
+      ? Vec.lrpCubic(before, before.absOut, after.absIn, after, 0.5)
+      : Vec.lrp(before, after, 0.5);
+
+    const middlePoint = new PointLocation(middleVec);
+
+    // insert a new point into the path
+    const newPath = absolutePath.reduce<PointLocation[]>(
+      (acc, point, index) => {
+        if (index < insertIndex) {
+          acc[index] = point;
+          return acc;
+        }
+        if (index > insertIndex) {
+          acc[index + 1] = point;
+          return acc;
+        }
+        acc[index] = middlePoint;
+        acc[index + 1] = point;
+        return acc;
+      },
+      Array.from({ length: absolutePath.length + 1 })
+    );
+
+    ConnectorPathGenerator.updatePoints(connector, newPath, insertIndex);
+  }
+
+  static movePoint(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    elementGetter: (id: string) => GfxModel | null,
+    movingIndex: number,
+    absolutePoint: IVec
+  ) {
+    let newMovingIndex = movingIndex;
+    let absolutePath = connector.absolutePath;
+    const instance = new ConnectorPathGenerator({
+      getElementById: elementGetter,
+    });
+
+    const isCurve = connector.mode === ConnectorMode.Curve;
+    const isStraight = connector.mode === ConnectorMode.Straight;
+    const isOrthogonal = connector.mode === ConnectorMode.Orthogonal;
+
+    if (isOrthogonal) {
+      [absolutePath, newMovingIndex] = instance._moveOrthogonalPoint(
+        connector,
+        movingIndex,
+        absolutePoint
+      );
+    }
+
+    if (isCurve || isStraight) {
+      absolutePath[movingIndex].setVec(absolutePoint);
+
+      if (isCurve) {
+        setBezierControlPointsAtIndex(
+          absolutePath,
+          movingIndex,
+          !!connector.source.id,
+          !!connector.target.id
+        );
+      }
+    }
+
+    ConnectorPathGenerator._updatePath(connector, absolutePath);
+    return newMovingIndex;
+  }
+
+  static removeExtraPoints(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    if (connector.mode !== ConnectorMode.Orthogonal) {
+      return;
+    }
+    let absolutePath = removeExtraPointsOnOneLine(connector.absolutePath);
+
+    if (absolutePath.length < connector.absolutePath.length) {
+      const instance = new ConnectorPathGenerator({
+        getElementById: elementGetter,
+      });
+
+      const [firstLockedIndex, lastLockedIndex] =
+        getFirstLastLockedPointIndex(absolutePath);
+
+      if (
+        isNaN(firstLockedIndex) ||
+        isNaN(lastLockedIndex) ||
+        firstLockedIndex === lastLockedIndex
+      ) {
+        absolutePath = instance.generateOrthogonalConnectorPath(
+          connector,
+          absolutePath
+        );
+      }
+
+      ConnectorPathGenerator._updatePath(connector, absolutePath);
+    }
+  }
+
+  static removePoint(
+    connector: ConnectorElementModel,
+    movingIndex: number,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    const mode = connector.mode;
+
+    let absolutePath = connector.absolutePath;
+
+    if (mode === ConnectorMode.Orthogonal) {
+      absolutePath = ConnectorPathGenerator._removeOrthogonalPoint(
+        connector,
+        movingIndex,
+        elementGetter
+      );
+    } else {
+      // remove point from path
+      absolutePath = absolutePath.reduce<PointLocation[]>(
+        (acc, point, index) => {
+          if (index < movingIndex) acc[index] = point;
+          if (index > movingIndex) acc[index - 1] = point;
+          return acc;
+        },
+        Array.from({ length: absolutePath.length - 1 })
+      );
+
+      if (mode === ConnectorMode.Curve) {
+        const indexesToUpdate = [movingIndex - 1, movingIndex];
+        indexesToUpdate.forEach(index => {
+          setBezierControlPointsAtIndex(
+            absolutePath,
+            index,
+            !!connector.source.id,
+            !!connector.target.id,
+            false
+          );
+        });
+      }
+    }
+
+    ConnectorPathGenerator._updatePath(connector, absolutePath);
+  }
+
+  static updatePathEnds(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    elementGetter: (id: string) => GfxModel | null
+  ) {
+    const isLocalConnector = connector instanceof LocalConnectorElementModel;
+
+    const instance = new ConnectorPathGenerator({
+      getElementById: elementGetter,
+    });
+    const absolutePath = instance._generateConnectorPath(connector) ?? [];
+
+    if (connector.mode === ConnectorMode.Curve && absolutePath.length > 2) {
+      const hasSource = !!connector.source.id;
+      const hasTarget = !!connector.target.id;
+
+      if (connector.modeUpdating) {
+        setBezierControlPoints(absolutePath, hasSource, hasTarget);
+      } else {
+        setBezierControlPointsAtIndex(absolutePath, 0, hasSource, hasTarget);
+        setBezierControlPointsAtIndex(
+          absolutePath,
+          absolutePath.length - 1,
+          hasSource,
+          hasTarget
+        );
+      }
+    }
+
+    const { bound, path, serializedPath } = ConnectorPathGenerator._getNewBound(
+      connector,
+      absolutePath
+    );
+    const newXYWH = bound.serialize();
+    if (newXYWH !== connector.xywh) {
+      connector.xywh = newXYWH;
+    }
+    connector.path = path;
+    if (
+      !isEqual(serializedPath[0], connector.serializedPath[0]) ||
+      !isEqual(
+        serializedPath[path.length - 1],
+        connector.serializedPath[connector.serializedPath.length - 1]
+      )
+    ) {
+      connector.serializedPath = serializedPath;
+    }
+    ConnectorPathGenerator._updateLabelXYWH(connector);
+
+    if (!isLocalConnector) {
+      connector.modeUpdating = false;
+    }
+  }
+
+  static updatePoints(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    absolutePath: PointLocation[],
+    updatedIndex?: number
+  ) {
+    if (
+      connector.mode === ConnectorMode.Curve &&
+      typeof updatedIndex === 'number'
+    ) {
+      setBezierControlPointsAtIndex(
+        absolutePath,
+        updatedIndex,
+        !!connector.source.id,
+        !!connector.target.id
+      );
+    }
+    ConnectorPathGenerator._updatePath(connector, absolutePath);
   }
 
   private _computeStartEndPoint(
@@ -1085,34 +1516,29 @@ export class ConnectorPathGenerator {
       startPoint = this._getConnectionPoint(connector, 'source');
       endPoint = this._getConnectionPoint(connector, 'target');
     }
-    return [startPoint, endPoint];
+    return [startPoint, endPoint] as const;
   }
 
   private _generateConnectorPath(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
-    const { mode } = connector;
+    const {
+      mode,
+      path,
+      deserializedXYWH: [x, y],
+    } = connector;
     if (mode === ConnectorMode.Straight) {
       return this._generateStraightConnectorPath(connector);
     } else if (mode === ConnectorMode.Orthogonal) {
-      const start = this._getConnectorEndElement(connector, 'source');
-      const end = this._getConnectorEndElement(connector, 'target');
+      const absolutePath = path.map(point =>
+        point.clone().setVec(Vec.add(point, [x, y]))
+      );
+      const orthogonalPath = this.generateOrthogonalConnectorPath(
+        connector,
+        absolutePath
+      );
 
-      const [startPoint, endPoint] = this._computeStartEndPoint(connector);
-
-      const startBound = start
-        ? Bound.from(getBoundsWithRotation(rBound(start)))
-        : null;
-      const endBound = end
-        ? Bound.from(getBoundsWithRotation(rBound(end)))
-        : null;
-      const path = this.generateOrthogonalConnectorPath({
-        startPoint,
-        endPoint,
-        startBound,
-        endBound,
-      });
-      return path.map(p => new PointLocation(p));
+      return orthogonalPath;
     } else if (mode === ConnectorMode.Curve) {
       return this._generateCurveConnectorPath(connector);
     }
@@ -1122,7 +1548,16 @@ export class ConnectorPathGenerator {
   private _generateCurveConnectorPath(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
-    const { source, target } = connector;
+    const {
+      source,
+      target,
+      path,
+      deserializedXYWH: [x, y],
+    } = connector;
+
+    const absolutePoints = path.map(point =>
+      point.clone().setVec(Vec.add(point, [x, y]))
+    );
 
     if (source.id || target.id) {
       let startPoint: PointLocation;
@@ -1168,8 +1603,18 @@ export class ConnectorPathGenerator {
             ) / 3
           )
         );
+      } else {
+        if (
+          Math.abs(endPoint[0] - startPoint[0]) >
+          Math.abs(endPoint[1] - startPoint[1])
+        ) {
+          endPoint.in = [Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[0], 0];
+        } else {
+          endPoint.in = [0, Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[1]];
+        }
       }
-      return [startPoint, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
     } else {
       const endPoint = this._getConnectionPoint(connector, 'target');
       const startPoint = this._getConnectionPoint(connector, 'source');
@@ -1183,14 +1628,26 @@ export class ConnectorPathGenerator {
         startPoint.out = [0, Vec.mul(Vec.sub(endPoint, startPoint), 2 / 3)[1]];
         endPoint.in = [0, Vec.mul(Vec.sub(startPoint, endPoint), 2 / 3)[1]];
       }
-      return [startPoint, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
     }
+    return absolutePoints;
   }
 
   private _generateStraightConnectorPath(
     connector: ConnectorElementModel | LocalConnectorElementModel
   ) {
-    const { source, target } = connector;
+    const {
+      source,
+      target,
+      path,
+      deserializedXYWH: [x, y],
+    } = connector;
+
+    const absolutePoints = path.map(point =>
+      point.clone().setVec(Vec.add(point, [x, y]))
+    );
+
     if (source.id && !source.position && target.id && !target.position) {
       const start = this._getConnectorEndElement(
         connector,
@@ -1204,11 +1661,18 @@ export class ConnectorPathGenerator {
       const eb = Bound.deserialize(end.xywh);
       const startPoint = getNearestConnectableAnchor(start, eb.center);
       const endPoint = getNearestConnectableAnchor(end, sb.center);
-      return [startPoint, endPoint];
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
+      return absolutePoints;
     } else {
       const endPoint = this._getConnectionPoint(connector, 'target');
       const startPoint = this._getConnectionPoint(connector, 'source');
-      return (startPoint && endPoint && [startPoint, endPoint]) ?? [];
+      if (!startPoint || !endPoint) {
+        return [];
+      }
+      absolutePoints[0] = startPoint;
+      absolutePoints[absolutePoints.length - 1 || 1] = endPoint;
+      return absolutePoints;
     }
   }
 
@@ -1246,6 +1710,137 @@ export class ConnectorPathGenerator {
     }
 
     return null;
+  }
+
+  private _moveOrthogonalPoint(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    movingIndex: number,
+    absolutePoint: IVec
+  ) {
+    let newMovingIndex = movingIndex;
+    let absolutePath = connector.absolutePath;
+
+    let before = absolutePath[movingIndex];
+    let after = absolutePath[movingIndex + 1];
+    // 0: x, 1: y
+    const movingDir = before[0] === after[0] ? 0 : 1;
+
+    const [firstLockedPointIndex, lastLockedPointIndex] =
+      getFirstLastLockedPointIndex(absolutePath);
+
+    const hasLockedLine =
+      !isNaN(firstLockedPointIndex) && !isNaN(lastLockedPointIndex);
+
+    const { startPoint, startBound, endPoint, endBound } =
+      this.getStartEndBounds(connector);
+
+    if (!hasLockedLine) {
+      before[movingDir] = absolutePoint[movingDir];
+      before.lockedAxises[movingDir] = true;
+      after[movingDir] = absolutePoint[movingDir];
+      after.lockedAxises[movingDir] = true;
+      const pathToStart = this.generateOrthogonalConnectorPathToLine({
+        point: startPoint,
+        bound: startBound,
+        line: [before, after],
+      });
+      const pathToEnd = this.generateOrthogonalConnectorPathToLine({
+        point: endPoint,
+        bound: endBound,
+        line: [before, after],
+      });
+      before = pathToStart[pathToStart.length - 1];
+      after = pathToEnd[pathToEnd.length - 1];
+      absolutePath = pathToStart.concat(pathToEnd.reverse());
+      newMovingIndex = pathToStart.length - 1;
+    }
+
+    if (hasLockedLine && movingIndex === absolutePath.length - 2) {
+      const endLinePoint = new PointLocation(endPoint);
+      endLinePoint[movingDir] = absolutePoint[movingDir];
+      endLinePoint.lockedAxises[movingDir] = true;
+      before[movingDir] = absolutePoint[movingDir];
+      before.lockedAxises[movingDir] = true;
+      const pathToLine = this.generateOrthogonalConnectorPathToLine({
+        point: endPoint,
+        bound: endBound,
+        line: [before, endLinePoint],
+      });
+      const addedPointsCount = pathToLine.length - 1;
+      const newPath: PointLocation[] = Array.from({
+        length: absolutePath.length + addedPointsCount,
+      });
+      absolutePath.forEach((p, index) => (newPath[index] = p));
+      pathToLine.forEach(
+        (p, index) => (newPath[newPath.length - 1 - index] = p)
+      );
+      after = pathToLine[pathToLine.length - 1];
+      absolutePath = newPath;
+    }
+
+    if (hasLockedLine && movingIndex === 0) {
+      const startLinePoint = new PointLocation(startPoint);
+      startLinePoint[movingDir] = absolutePoint[movingDir];
+      startLinePoint.lockedAxises[movingDir] = true;
+      after[movingDir] = absolutePoint[movingDir];
+      after.lockedAxises[movingDir] = true;
+      const pathToLine = this.generateOrthogonalConnectorPathToLine({
+        point: startPoint,
+        bound: startBound,
+        line: [startLinePoint, after],
+      });
+      const addedPointsCount = pathToLine.length - 1;
+      const newPath: PointLocation[] = Array.from({
+        length: absolutePath.length + addedPointsCount,
+      });
+      absolutePath.forEach(
+        (p, index) => (newPath[index + addedPointsCount] = p)
+      );
+      pathToLine.forEach((p, index) => (newPath[index] = p));
+      before = pathToLine[pathToLine.length - 1];
+      absolutePath = newPath;
+      newMovingIndex = addedPointsCount;
+    }
+
+    if (movingIndex > 0 && movingIndex < absolutePath.length - 2) {
+      before[movingDir] = absolutePoint[movingDir];
+      after[movingDir] = absolutePoint[movingDir];
+      before.lockedAxises[movingDir] = true;
+      after.lockedAxises[movingDir] = true;
+    }
+
+    // 0: x, 1: y
+    const beforeLineDir =
+      absolutePath[newMovingIndex - 2]?.[0] ===
+      absolutePath[newMovingIndex - 1]?.[0]
+        ? 0
+        : 1;
+    const afterLineDir =
+      absolutePath[newMovingIndex + 2]?.[0] ===
+      absolutePath[newMovingIndex + 3]?.[0]
+        ? 0
+        : 1;
+    const beforeLineDirValue =
+      absolutePath[newMovingIndex - 2]?.[beforeLineDir];
+    const afterLineDirValue = absolutePath[newMovingIndex + 2]?.[afterLineDir];
+
+    if (
+      movingDir === beforeLineDir &&
+      Math.abs(absolutePoint[movingDir] - beforeLineDirValue) < 10
+    ) {
+      before[movingDir] = beforeLineDirValue;
+      after[movingDir] = beforeLineDirValue;
+    }
+
+    if (
+      movingDir === afterLineDir &&
+      Math.abs(absolutePoint[movingDir] - afterLineDirValue) < 10
+    ) {
+      before[movingDir] = afterLineDirValue;
+      after[movingDir] = afterLineDirValue;
+    }
+
+    return [absolutePath, newMovingIndex] as const;
   }
 
   private _prepareOrthogonalConnectorInfo(
@@ -1295,7 +1890,128 @@ export class ConnectorPathGenerator {
     ];
   }
 
-  generateOrthogonalConnectorPath(input: OrthogonalConnectorInput): IVec[] {
+  generateOrthogonalConnectorPath(
+    connector: ConnectorElementModel | LocalConnectorElementModel,
+    path: PointLocation[]
+  ) {
+    const { startPoint, startBound, endPoint, endBound } =
+      this.getStartEndBounds(connector);
+
+    const [firstLockedPointIndex, lastLockedPointIndex] =
+      getFirstLastLockedPointIndex(path);
+
+    if (
+      isNaN(firstLockedPointIndex) ||
+      isNaN(lastLockedPointIndex) ||
+      firstLockedPointIndex === lastLockedPointIndex
+    ) {
+      return this.generateSmallestOrthogonalConnectorPath({
+        startPoint,
+        endPoint,
+        startBound,
+        endBound,
+      }).map(p => new PointLocation(p));
+    }
+
+    const betweenPoints = path.slice(
+      firstLockedPointIndex + 1,
+      lastLockedPointIndex
+    );
+
+    const pointsToFirstLine = this.generateOrthogonalConnectorPathToLine({
+      point: startPoint,
+      bound: startBound,
+      line: [path[firstLockedPointIndex], path[firstLockedPointIndex + 1]],
+    });
+    const pointsToLastLine = this.generateOrthogonalConnectorPathToLine({
+      point: endPoint,
+      bound: endBound,
+      line: [path[lastLockedPointIndex], path[lastLockedPointIndex - 1]],
+    });
+
+    const newPath: PointLocation[] = Array.from({
+      length:
+        betweenPoints.length +
+        pointsToFirstLine.length +
+        pointsToLastLine.length,
+    });
+
+    pointsToFirstLine.forEach((point, index) => {
+      newPath[index] = point;
+    });
+    betweenPoints.forEach((point, index) => {
+      newPath[index + pointsToFirstLine.length] = point;
+    });
+    pointsToLastLine.forEach((_, index) => {
+      newPath[index + pointsToFirstLine.length + betweenPoints.length] =
+        pointsToLastLine[pointsToLastLine.length - 1 - index];
+    });
+
+    return newPath;
+  }
+
+  generateOrthogonalConnectorPathToLine({
+    point,
+    bound,
+    line,
+  }: OrthogonalConnectorToLineInput) {
+    const start = line[0].clone();
+    const end = line[1].clone();
+
+    if (Vec.isEqual(start, end)) {
+      if (start.lockedAxises[0] && end.lockedAxises[0]) {
+        end.setVec([end[0], end[1] + 10]);
+      } else if (start.lockedAxises[1] && end.lockedAxises[1]) {
+        end.setVec([end[0] + 10, end[1]]);
+      }
+    }
+
+    const lineDir = start[0] === end[0] ? 0 : 1;
+
+    if (!bound) {
+      const pointOnLine = new PointLocation(
+        Vec.nearestPointOnLineSegment(start, end, point, false)
+      );
+      pointOnLine.lockedAxises[lineDir] = true;
+      return [point, pointOnLine];
+    }
+
+    const pointOnLine = new PointLocation(
+      Vec.nearestPointOnLineSegment(start, end, point, false)
+    );
+    const outsideBoundPoint = Vec.add(
+      point,
+      Vec.mul(
+        Vec.uni(Vec.sub(pointOnLine, point)),
+        Math.max(bound.w, bound.h) + 20
+      )
+    );
+    pointOnLine[lineDir] = outsideBoundPoint[lineDir];
+    const path = this.generateSmallestOrthogonalConnectorPath({
+      startPoint: point,
+      startBound: bound,
+      endBound: null,
+      endPoint: pointOnLine,
+    }).map(p => new PointLocation(p));
+
+    const pathEnd = path[path.length - 1];
+    const pathBeforeEnd = path[path.length - 2];
+
+    const pathLastLineDir = pathEnd[0] === pathBeforeEnd[0] ? 0 : 1;
+
+    if (pathLastLineDir === lineDir) {
+      path.pop();
+    }
+
+    path[path.length - 1][lineDir] = start[lineDir];
+    path[path.length - 1].lockedAxises[lineDir] = true;
+
+    return path;
+  }
+
+  generateSmallestOrthogonalConnectorPath(
+    input: OrthogonalConnectorInput
+  ): IVec[] {
     const info = this._prepareOrthogonalConnectorInfo(input);
     const [startPoint, endPoint, nextStartPoint, lastEndPoint] = info;
     const [, , , , startBound, endBound, expandStartBound, expandEndBound] =
@@ -1354,6 +2070,21 @@ export class ConnectorPathGenerator {
     if (!startBound) path.shift();
 
     return mergePath(path);
+  }
+
+  getStartEndBounds(
+    connector: ConnectorElementModel | LocalConnectorElementModel
+  ) {
+    const start = this._getConnectorEndElement(connector, 'source');
+    const end = this._getConnectorEndElement(connector, 'target');
+    const [startPoint, endPoint] = this._computeStartEndPoint(connector);
+    const startBound = start
+      ? Bound.from(getBoundsWithRotation(rBound(start)))
+      : null;
+    const endBound = end
+      ? Bound.from(getBoundsWithRotation(rBound(end)))
+      : null;
+    return { startPoint, startBound, endPoint, endBound };
   }
 
   hasRelatedElement(

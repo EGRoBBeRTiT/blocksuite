@@ -1,6 +1,10 @@
-import type { PointLocation, SerializedXYWH } from '@blocksuite/global/utils';
-
 import { GfxLocalElementModel } from '@blocksuite/block-std/gfx';
+import {
+  getBezierSvgPathFromPoints,
+  PointLocation,
+  type SerializedPointLocation,
+  type SerializedXYWH,
+} from '@blocksuite/global/utils';
 
 import type { Connection } from './connector.js';
 
@@ -13,7 +17,9 @@ import {
 } from '../../consts/index.js';
 
 export class LocalConnectorElementModel extends GfxLocalElementModel {
-  private _path: PointLocation[] = [];
+  #curveCommands = '';
+
+  #path: PointLocation[] = [];
 
   absolutePath: PointLocation[] = [];
 
@@ -21,7 +27,11 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   id: string = '';
 
+  localUpdating = false;
+
   mode: ConnectorMode = ConnectorMode.Orthogonal;
+
+  modeUpdating = false;
 
   rearEndpointStyle!: PointStyle;
 
@@ -32,6 +42,8 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
   roughness: number = DEFAULT_ROUGHNESS;
 
   seed: number = Math.random();
+
+  serializedPath: SerializedPointLocation[] = [];
 
   source: Connection = {
     position: [0, 0],
@@ -47,18 +59,29 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
     position: [0, 0],
   };
 
-  updatingPath = false;
-
   xywh: SerializedXYWH = '[0,0,0,0]';
 
+  /**
+   * The SVG path commands for the curve connector.
+   */
+  get curveCommands() {
+    if (!this.#curveCommands) {
+      this.#curveCommands = getBezierSvgPathFromPoints(this.path);
+    }
+    return this.#curveCommands;
+  }
+
   get path(): PointLocation[] {
-    return this._path;
+    if (!this.#path || !this.#path.length) {
+      this.path = this.serializedPath.map(PointLocation.fromSerialized);
+    }
+    return this.#path;
   }
 
   set path(value: PointLocation[]) {
     const { x, y } = this;
-
-    this._path = value;
+    this.#curveCommands = '';
+    this.#path = value;
     this.absolutePath = value.map(p => p.clone().setVec([p[0] + x, p[1] + y]));
   }
 

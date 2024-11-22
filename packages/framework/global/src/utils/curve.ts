@@ -131,18 +131,35 @@ export function getBezierNearestTime(
   return minT;
 }
 
-export function getBezierNearestPoint(
-  values: BezierCurveParameters,
-  point: IVec
-) {
-  const t = getBezierNearestTime(values, point);
-  const pointOnCurve = getBezierPoint(values, t);
-  assertExists(pointOnCurve);
-  return pointOnCurve;
+export function getBezierNearestPoint(points: PointLocation[], point: IVec) {
+  let nearestPointOnCurve: IVec | null = null;
+  let minT = 0;
+  let minDist2ToPointOnCurve = Infinity;
+  let segmentIndex = 0;
+
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    const t = getBezierNearestTime(b, point);
+    const pointOnCurve = getBezierPoint(b, t);
+    const dist2ToPointOnCurve = pointOnCurve
+      ? Vec.dist2(pointOnCurve, point)
+      : Infinity;
+
+    if (dist2ToPointOnCurve < minDist2ToPointOnCurve) {
+      nearestPointOnCurve = pointOnCurve;
+      minDist2ToPointOnCurve = dist2ToPointOnCurve;
+      minT = t;
+      segmentIndex = i - 1;
+    }
+  }
+
+  assertExists(nearestPointOnCurve);
+
+  return { point: nearestPointOnCurve, t: minT, segmentIndex } as const;
 }
 
 export function getBezierParameters(
-  points: PointLocation[]
+  points: [PointLocation, PointLocation]
 ): BezierCurveParameters {
   return [points[0], points[0].absOut, points[1].absIn, points[1]];
 }
@@ -254,6 +271,22 @@ export function getBezierCurveBoundingBox(values: BezierCurveParameters) {
   const bottom = Math.max.apply(null, bounds[1]);
 
   return new Bound(left, top, right - left, bottom - top);
+}
+
+export function getEntireBezierCurveBoundingBox(points: PointLocation[]) {
+  let entireBox = getBezierCurveBoundingBox(
+    getBezierParameters([points[0], points[1]])
+  );
+
+  for (let i = 2; i < points.length; i++) {
+    const box = getBezierCurveBoundingBox(
+      getBezierParameters([points[i - 1], points[i]])
+    );
+
+    entireBox = entireBox.unite(box);
+  }
+
+  return entireBox;
 }
 
 // https://pomax.github.io/bezierjs/#intersect-line
@@ -385,14 +418,319 @@ function roots(points: BezierCurveParameters, line: IVec[]) {
 
 export function curveIntersects(path: PointLocation[], line: [IVec, IVec]) {
   const { minX, maxX, minY, maxY } = Bound.fromPoints(line);
-  const points = getBezierParameters(path);
-  const intersectedPoints = roots(points, line)
-    .map(t => getBezierPoint(points, t))
-    .filter(point =>
-      point
-        ? between(point[0], minX, maxX) && between(point[1], minY, maxY)
-        : false
-    )
-    .map(point => new PointLocation(point!));
+
+  const intersectedPoints = path.reduce<PointLocation[]>(
+    (acc, point, index) => {
+      if (index === 0) {
+        return acc;
+      }
+
+      const points = getBezierParameters([path[index - 1], point]);
+
+      const intersectedPoints = roots(points, line)
+        .map(t => getBezierPoint(points, t))
+        .filter(point =>
+          point
+            ? between(point[0], minX, maxX) && between(point[1], minY, maxY)
+            : false
+        )
+        .map(point => new PointLocation(point!));
+
+      acc.push(...intersectedPoints);
+
+      return acc;
+    },
+    []
+  );
+
   return intersectedPoints.length > 0 ? intersectedPoints : null;
+}
+
+export function getPointAtBezierLineLen(points: PointLocation[], len: number) {
+  const n = points.length;
+
+  if (n === 0) {
+    return null;
+  }
+
+  if (n === 1) {
+    return points[0];
+  }
+
+  let fromStart = true;
+  if (len < 0) {
+    fromStart = false;
+    len = -len;
+  }
+
+  const stepsCount = 100;
+  const step = 1 / stepsCount;
+  let currLen = 0;
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    let prevPoint = getBezierPoint(b, 0);
+    for (let j = step; j <= 1; j += step) {
+      const point = getBezierPoint(b, j);
+      if (point && prevPoint) {
+        const prevLen = currLen;
+        currLen += Vec.dist(point, prevPoint);
+        if (currLen >= len) {
+          if (currLen - len < len - prevLen) {
+            return point;
+          }
+          return prevPoint;
+        }
+      }
+      prevPoint = point;
+    }
+  }
+  const lastPoint = fromStart ? points[n - 1] : points[0];
+  return lastPoint;
+}
+
+export function getPointAtBezierLine(points: PointLocation[], ratio: number) {
+  const n = points.length;
+
+  if (n === 0) {
+    return null;
+  }
+
+  if (n === 1) {
+    return points[0];
+  }
+
+  if (ratio <= 0) {
+    return points[0];
+  }
+
+  if (ratio >= 1) {
+    return points[n - 1];
+  }
+
+  const total = getBezierCurveLen(points);
+  const len = total * ratio;
+  return getPointAtBezierLineLen(points, len);
+}
+
+export function getBezierCurveSegmentLen(
+  values: BezierCurveParameters,
+  stepsCount = 100
+) {
+  const step = 1 / stepsCount;
+  let len = 0;
+  let prevPoint = getBezierPoint(values, 0);
+  for (let i = step; i <= 1; i += step) {
+    const point = getBezierPoint(values, i);
+    if (point && prevPoint) {
+      len += Vec.dist(point, prevPoint);
+    }
+    prevPoint = point;
+  }
+  return len;
+}
+
+export function getBezierCurveLen(
+  points: PointLocation[],
+  segmentStepsCount = 100
+) {
+  let len = 0;
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    len += getBezierCurveSegmentLen(b, segmentStepsCount);
+  }
+  return len;
+}
+
+export function getBezierCurveLenAtPoint(
+  points: PointLocation[],
+  point: IVec,
+  segmentStepsCount = 100
+) {
+  const step = 1 / segmentStepsCount;
+
+  const { t, segmentIndex } = getBezierNearestPoint(points, point);
+
+  let len = 0;
+
+  for (let i = 0; i < segmentIndex; i++) {
+    const b = getBezierParameters([points[i], points[i + 1]]);
+    len += getBezierCurveSegmentLen(b, segmentStepsCount);
+  }
+
+  const b = getBezierParameters([
+    points[segmentIndex],
+    points[segmentIndex + 1],
+  ]);
+  let prevPoint = getBezierPoint(b, 0);
+  const maxStep = Math.round(t / step) * step;
+  for (let i = step; i <= maxStep; i += step) {
+    const point = getBezierPoint(b, i);
+    if (point && prevPoint) {
+      len += Vec.dist(point, prevPoint);
+    }
+    prevPoint = point;
+  }
+
+  return len;
+}
+
+export function getBezierSvgPathFromPoints(points: PointLocation[]) {
+  let path = '';
+  for (let i = 1; i < points.length; i++) {
+    const b = getBezierParameters([points[i - 1], points[i]]);
+    path += `M${b[0][0]},${b[0][1]} C${b[1][0]},${b[1][1]} ${b[2][0]},${b[2][1]} ${b[3][0]},${b[3][1]}`;
+    if (i < points.length - 1) {
+      path += ', ';
+    }
+  }
+  return path;
+}
+
+// ? Mutate the input points
+export function setBezierClosedControlPointsAtIndex(
+  points: PointLocation[],
+  pointIndex: number
+) {
+  const point = points[pointIndex];
+
+  if (!point || pointIndex < 1 || pointIndex > points.length - 2) {
+    return;
+  }
+
+  const before = points[pointIndex - 1];
+  const after = points[pointIndex + 1];
+
+  const vectorToBefore = Vec.sub(before, point);
+  const vectorToAfter = Vec.sub(after, point);
+
+  const controlVector = Vec.normalize(
+    Vec.sub(Vec.normalize(vectorToBefore), Vec.normalize(vectorToAfter))
+  );
+
+  const controlBefore = Vec.mul(
+    controlVector,
+    (1 / 3) * Vec.len(vectorToBefore)
+  );
+  const controlAfter = Vec.mul(
+    controlVector,
+    (-1 / 3) * Vec.len(vectorToAfter)
+  );
+
+  point.in = controlBefore;
+  point.out = controlAfter;
+  point.tangent = Vec.normalize(controlAfter);
+
+  return;
+}
+
+// ? Mutate the input points
+export function setBezierOpenedControlPointsAtIndex(
+  points: PointLocation[],
+  pointIndex: number,
+  isStrictDirection = true
+) {
+  const point = points[pointIndex];
+
+  if (!point || (pointIndex !== 0 && pointIndex !== points.length - 1)) {
+    return;
+  }
+
+  const isStart = pointIndex === 0;
+  const nearPointIndex = isStart ? pointIndex + 1 : pointIndex - 1;
+  const pointDir = isStart ? 'out' : 'in';
+
+  if (isStrictDirection) {
+    const minLength = points.length === 2 ? 100 : 50;
+    const tangentVertical = Vec.rot(point.tangent, -Math.PI / 2);
+    point[pointDir] = Vec.mul(
+      tangentVertical,
+      Math.max(
+        minLength,
+        Math.abs(
+          Vec.pry(Vec.sub(points[nearPointIndex], point), tangentVertical)
+        ) / 3
+      )
+    );
+
+    return;
+  }
+
+  const nearPointDir = isStart ? 'absIn' : 'absOut';
+  const control = Vec.mul(
+    Vec.sub(points[nearPointIndex][nearPointDir], point),
+    0.5
+  );
+  point[pointDir] = control;
+  return;
+}
+
+// ? Mutate the input points
+export function setBezierControlPointsAtIndex(
+  points: PointLocation[],
+  pointIndex: number,
+  isStrictSourceDirection: boolean,
+  isStrictTargetDirection: boolean,
+  shouldChangeNeighbors = true
+) {
+  const point = points[pointIndex];
+  const isPointClosed = pointIndex > 0 && pointIndex < points.length - 1;
+  if (!point) {
+    return;
+  }
+  const updateNeighbors = () => {
+    if (shouldChangeNeighbors) {
+      const neighborIndexes = [pointIndex - 1, pointIndex + 1];
+      if (pointIndex === 2) {
+        neighborIndexes.push(0);
+      }
+      if (pointIndex === points.length - 3) {
+        neighborIndexes.push(points.length - 1);
+      }
+      neighborIndexes.forEach(index => {
+        setBezierControlPointsAtIndex(
+          points,
+          index,
+          isStrictSourceDirection,
+          isStrictTargetDirection,
+          false
+        );
+      });
+    }
+  };
+  if (isPointClosed) {
+    setBezierClosedControlPointsAtIndex(points, pointIndex);
+    updateNeighbors();
+  } else {
+    const isStrictDirection =
+      (pointIndex === 0 && isStrictSourceDirection) ||
+      (pointIndex === points.length - 1 && isStrictTargetDirection);
+
+    updateNeighbors();
+    setBezierOpenedControlPointsAtIndex(points, pointIndex, isStrictDirection);
+  }
+}
+
+export function setBezierControlPoints(
+  points: PointLocation[],
+  isStrictSourceDirection: boolean,
+  isStrictTargetDirection: boolean
+) {
+  // [1, 2, 3, ..., 0, length - 1]
+  points.forEach((_, i) => {
+    let index = i + 1;
+
+    if (i === points.length - 2) {
+      index = 0;
+    }
+    if (i === points.length - 1) {
+      index = i;
+    }
+    setBezierControlPointsAtIndex(
+      points,
+      index,
+      isStrictSourceDirection,
+      isStrictTargetDirection,
+      false
+    );
+  });
 }

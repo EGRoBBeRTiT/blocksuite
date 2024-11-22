@@ -1,13 +1,11 @@
+import type { PointLocation } from '@blocksuite/global/utils';
+
 import {
   type ConnectorElementModel,
   ConnectorMode,
   type LocalConnectorElementModel,
   type PointStyle,
 } from '@blocksuite/affine-model';
-import {
-  getBezierParameters,
-  type PointLocation,
-} from '@blocksuite/global/utils';
 import { deltaInsertsToChunks } from '@blocksuite/inline';
 
 import type { RoughCanvas } from '../../../utils/rough/canvas.js';
@@ -127,7 +125,7 @@ function renderPoints(
   curve: boolean,
   stroke: string
 ) {
-  const { seed, strokeWidth, roughness, rough } = model;
+  const { seed, strokeWidth, roughness, rough, curveCommands } = model;
 
   if (rough) {
     const options = {
@@ -138,11 +136,7 @@ function renderPoints(
       strokeWidth,
     };
     if (curve) {
-      const b = getBezierParameters(points);
-      rc.path(
-        `M${b[0][0]},${b[0][1]} C${b[1][0]},${b[1][1]} ${b[2][0]},${b[2][1]} ${b[3][0]},${b[3][1]}`,
-        options
-      );
+      rc.path(curveCommands, options);
     } else {
       rc.linearPath(points as unknown as [number, number][], options);
     }
@@ -155,21 +149,7 @@ function renderPoints(
     dash && ctx.setLineDash([12, 12]);
     ctx.beginPath();
     if (curve) {
-      points.forEach((point, index) => {
-        if (index === 0) {
-          ctx.moveTo(point[0], point[1]);
-        } else {
-          const last = points[index - 1];
-          ctx.bezierCurveTo(
-            last.absOut[0],
-            last.absOut[1],
-            point.absIn[0],
-            point.absIn[1],
-            point[0],
-            point[1]
-          );
-        }
-      });
+      ctx.stroke(new Path2D(curveCommands));
     } else {
       points.forEach((point, index) => {
         if (index === 0) {
@@ -179,6 +159,7 @@ function renderPoints(
         }
       });
     }
+
     ctx.stroke();
     ctx.closePath();
     ctx.restore();
