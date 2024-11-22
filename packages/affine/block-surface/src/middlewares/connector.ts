@@ -1,6 +1,5 @@
 import type { ConnectorElementModel } from '@blocksuite/affine-model';
 import type { GfxModel } from '@blocksuite/block-std/gfx';
-import type { SerializedPointLocation } from '@blocksuite/global/utils';
 
 import type { SurfaceBlockModel, SurfaceMiddleware } from '../surface-model.js';
 
@@ -48,7 +47,10 @@ export const connectorMiddleware: SurfaceMiddleware = (
       if (!element) return;
 
       if ('type' in element && element.type === 'connector') {
-        addToUpdateList(element as ConnectorElementModel);
+        const connector = element as ConnectorElementModel;
+        if (connector.localUpdating) {
+          addToUpdateList(connector);
+        }
       } else {
         surface.getConnectors(id).forEach(addToUpdateList);
       }
@@ -74,23 +76,11 @@ export const connectorMiddleware: SurfaceMiddleware = (
       if (isConnector) {
         const connector = element as ConnectorElementModel;
 
-        if (props['serializedPath']) {
-          ConnectorPathGenerator.updatePath(
-            connector,
-            props['serializedPath'] as SerializedPointLocation[]
-          );
-        }
-
-        if (props['connection']) {
+        if (props['source'] || props['target'] || props['mode'] !== undefined) {
           if (connector.localUpdating) {
             addToUpdateList(connector);
             connector.localUpdating = false;
           }
-        }
-
-        if (props['mode'] !== undefined) {
-          connector.modeUpdating = true;
-          addToUpdateList(connector);
         }
       }
     }),

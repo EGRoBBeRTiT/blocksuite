@@ -23,11 +23,6 @@ export class LocalConnectorElementModel extends GfxLocalElementModel {
 
   absolutePath: PointLocation[] = [];
 
-  connection: { source: Connection; target: Connection } = {
-    source: {},
-    target: {},
-  };
-
   frontEndpointStyle!: PointStyle;
 
   id: string = '';

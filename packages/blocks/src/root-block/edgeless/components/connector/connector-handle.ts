@@ -1,21 +1,11 @@
 import type { GfxModel } from '@blocksuite/block-std/gfx';
 
-import {
-  ConnectorPathGenerator,
-  rBound,
-} from '@blocksuite/affine-block-surface';
+import { ConnectorPathGenerator } from '@blocksuite/affine-block-surface';
 import {
   type ConnectorElementModel,
   ConnectorMode,
 } from '@blocksuite/affine-model';
-import {
-  Bound,
-  debounce,
-  DisposableGroup,
-  getBoundsWithRotation,
-  Vec,
-  WithDisposable,
-} from '@blocksuite/global/utils';
+import { DisposableGroup, Vec, WithDisposable } from '@blocksuite/global/utils';
 import { css, html, LitElement, nothing } from 'lit';
 import { property, query, queryAll } from 'lit/decorators.js';
 import { type StyleInfo, styleMap } from 'lit/directives/style-map.js';
@@ -57,26 +47,32 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     }
   `;
 
-  private _disposeEvents = debounce(() => {
-    if (!this._isMoving) {
-      this._disposables.dispose();
-      this._disposables = new DisposableGroup();
-      this._bindEvent();
-    }
-  }, 200);
-
   private _isMoving = false;
 
   private _lastZoom = 1;
 
+  private _anchorDbClick(e: MouseEvent, target: HTMLDivElement) {
+    e.stopPropagation();
+    const index = Number(target.dataset.pointId);
+    this.edgeless.service.doc.transact(() => {
+      ConnectorPathGenerator.removePoint(this.connector, index, id =>
+        this._getElementById(id)
+      );
+    });
+  }
+
   private _bindEvent() {
-    const { edgeless, connector } = this;
+    const { edgeless } = this;
 
     this._disposables.add(
       edgeless.service.surface.elementUpdated.on(({ id }) => {
-        if (id === connector.id) {
+        if (!this._isMoving && id === this.connector.id) {
           this.requestUpdate();
-          this._disposeEvents();
+          void this.updateComplete.then(() => {
+            this._disposables.dispose();
+            this._disposables = new DisposableGroup();
+            this._bindEvent();
+          });
         }
       })
     );
@@ -101,17 +97,25 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
     this._disposables.add(() => {
       edgeless.service.connectorOverlay.clear();
     });
+    const addDblclickListener = (element: Node) => {
+      this._disposables.addFromEvent(element as HTMLElement, 'dblclick', e => {
+        this._anchorDbClick(e, element as HTMLDivElement);
+      });
+    };
+    this._availableAnchors.forEach(addDblclickListener);
+    this._lockedAnchors.forEach(addDblclickListener);
   }
 
   private _capPointerDown(e: PointerEvent, connection: 'target' | 'source') {
     const { edgeless, connector, _disposables } = this;
-    const { service } = edgeless;
-    this._isMoving = true;
-
-    connector.stashRapidlyFields();
+    const service = edgeless.service;
 
     e.stopPropagation();
     _disposables.addFromEvent(document, 'pointermove', e => {
+      if (!this._isMoving) {
+        this._isMoving = true;
+        connector.stashRapidlyFields();
+      }
       const point = service.viewport.toModelCoordFromClientCoord([e.x, e.y]);
       const isStartPointer = connection === 'source';
       const otherSideId = connector[isStartPointer ? 'target' : 'source'].id;
@@ -123,113 +127,89 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
             otherSideId ? [otherSideId] : []
           );
       });
+      this.requestUpdate();
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
-      this._isMoving = false;
-      service.doc.transact(() => {
-        connector.popRapidlyFields();
-      });
+      if (this._isMoving) {
+        this._isMoving = false;
+        service.doc.transact(() => {
+          connector.popRapidlyFields();
+        });
+      }
       this._disposePointerup();
     });
   }
 
-  private _closedAnchorPointerDown(e: PointerEvent, target: Element) {
-    const { edgeless, connector, _disposables } = this;
-    const { service } = edgeless;
+  private _closedAnchorPointerDown(e: PointerEvent, target: HTMLDivElement) {
     e.stopPropagation();
-    this._isMoving = true;
-
-    connector.stash('xywh');
-    connector.stash('labelXYWH');
-    connector.stash('serializedPath');
-
-    let movingAnchor: Element | null | undefined = target?.classList.contains(
-      'available'
-    )
-      ? target
-      : undefined;
-    let movingAnchorSelector: string | undefined = undefined;
-    let movingIndex = Number.NaN;
-
-    const elementGetter = (id: string) =>
-      edgeless.surfaceBlockModel.getElementById(id) ??
-      (edgeless.surfaceBlockModel.doc.getBlockById(id) as GfxModel);
+    const { edgeless, connector, _disposables } = this;
+    const service = edgeless.service;
+    const isAvailable = target.classList.contains('available');
+    const isUnAvailable = target.classList.contains('unavailable');
+    const isLocked = target.classList.contains('locked');
+    const fieldsForStash = ['xywh', 'labelXYWH', 'serializedPath'];
+    const pointId = Number(target.dataset.pointId);
+    let movingIndex = isAvailable ? pointId : Number.NaN;
 
     _disposables.addFromEvent(document, 'pointermove', e => {
+      if (!this._isMoving) {
+        this._isMoving = true;
+        fieldsForStash.forEach(connector.stash.bind(connector));
+      }
+
       const point = service.viewport.toModelCoordFromClientCoord([e.x, e.y]);
 
-      if (movingAnchor) {
-        const anchorElement = movingAnchor;
-
-        const index = Number(anchorElement?.getAttribute('data-point-id'));
-
+      if (!isNaN(movingIndex)) {
         service.doc.transact(() => {
           movingIndex = ConnectorPathGenerator.movePoint(
             connector,
-            elementGetter,
-            index,
+            id => this._getElementById(id),
+            movingIndex,
             point
           );
         });
-
-        return;
       }
 
-      if (movingAnchorSelector && !movingAnchor) {
-        movingAnchor = this.renderRoot.querySelector(movingAnchorSelector);
-
-        return;
-      }
-
-      if (
-        movingAnchor === undefined &&
-        (target?.classList.contains('unavailable') ||
-          target?.classList.contains('freezed'))
-      ) {
-        const index = Number(target?.getAttribute('data-point-id'));
-
+      if (isNaN(movingIndex) && (isUnAvailable || isLocked)) {
         if (connector.mode === ConnectorMode.Orthogonal) {
-          const index = isNaN(movingIndex)
-            ? Number(target?.getAttribute('data-point-id'))
-            : movingIndex;
-
           service.doc.transact(() => {
             movingIndex = ConnectorPathGenerator.movePoint(
               connector,
-              elementGetter,
-              index,
+              id => this._getElementById(id),
+              pointId,
               point
             );
           });
         } else {
-          ConnectorPathGenerator.addPointIntoPath(connector, index + 1);
-
-          movingAnchorSelector = `.line-anchor.available[data-point-id="${index + 1}"]`;
-
-          movingAnchor = this.renderRoot.querySelector(movingAnchorSelector);
+          service.doc.transact(() => {
+            ConnectorPathGenerator.addPointIntoPath(connector, pointId + 1);
+          });
+          movingIndex = pointId + 1;
         }
       }
+      this.requestUpdate();
     });
 
     _disposables.addFromEvent(document, 'pointerup', () => {
-      movingAnchor = undefined;
-      movingAnchorSelector = undefined;
       movingIndex = Number.NaN;
-      this._isMoving = false;
-      service.doc.transact(() => {
-        ConnectorPathGenerator.removeExtraPoints(connector);
-        connector.pop('xywh');
-        connector.pop('labelXYWH');
-        connector.pop('serializedPath');
-      });
+      if (this._isMoving) {
+        this._isMoving = false;
+        service.doc.transact(() => {
+          ConnectorPathGenerator.removeExtraPoints(
+            connector,
+            this._getElementById.bind(this)
+          );
+          fieldsForStash.forEach(connector.pop.bind(connector));
+        });
+      }
       this._disposePointerup();
     });
   }
 
   private _disposePointerup() {
-    const { edgeless, _disposables } = this;
-
+    const edgeless = this.edgeless;
+    const _disposables = this._disposables;
     edgeless.service.overlays.connector.clear();
     edgeless.doc.captureSync();
     _disposables.dispose();
@@ -239,48 +219,48 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
   }
 
   private _getClosedAnchorPointStyles() {
+    if (this._isMoving) {
+      return [];
+    }
     const { path, mode } = this.connector;
-    const { service } = this.edgeless;
-    const { zoom } = service.viewport;
+    const service = this.edgeless.service;
+    const zoom = service.viewport.zoom;
 
     return path.reduce<StyleInfo[]>((acc, point, index) => {
       if (index === 0 || index === path.length - 1) {
         return acc;
       }
-
-      const domPoint = Vec.subScalar(Vec.mul(point, zoom), HALF_SIZE);
-
-      const styles: StyleInfo = {
-        transform: `translate3d(${domPoint[0]}px,${domPoint[1]}px,0)`,
-        display: '',
-      };
-
-      if (this._isMoving || mode === ConnectorMode.Orthogonal) {
+      const styles: StyleInfo = {};
+      if (mode === ConnectorMode.Orthogonal) {
         styles.display = 'none';
+      } else {
+        const domPoint = Vec.subScalar(Vec.mul(point, zoom), HALF_SIZE);
+        styles.transform = `translate3d(${domPoint[0]}px,${domPoint[1]}px,0)`;
       }
-
       acc.push(styles);
-
       return acc;
     }, []);
   }
 
-  private _getMiddlePointStyles() {
-    const { path, mode, source, target, absolutePath } = this.connector;
-    const { service } = this.edgeless;
-    const { zoom } = service.viewport;
+  private _getElementById(id: string) {
+    return (
+      this.edgeless.surfaceBlockModel.getElementById(id) ??
+      (this.edgeless.surfaceBlockModel.doc.getBlockById(id) as GfxModel)
+    );
+  }
 
+  private _getMiddlePointStyles() {
+    if (this._isMoving) {
+      return [];
+    }
+    const { path, mode, absolutePath } = this.connector;
+    const service = this.edgeless.service;
+    const zoom = service.viewport.zoom;
     const isOrthogonal = mode === ConnectorMode.Orthogonal;
 
-    const start = source.id ? service.getElementById(source.id) : null;
-    const end = target.id ? service.getElementById(target.id) : null;
-
-    const startBound = start
-      ? Bound.from(getBoundsWithRotation(rBound(start)))
-      : null;
-    const endBound = end
-      ? Bound.from(getBoundsWithRotation(rBound(end)))
-      : null;
+    const { startBound, endBound } = new ConnectorPathGenerator({
+      getElementById: id => this._getElementById(id),
+    }).getStartEndBounds(this.connector);
 
     return path.reduce<StyleInfo[]>((acc, point, index) => {
       if (index > 0) {
@@ -299,9 +279,7 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
           display: '',
         };
 
-        if (this._isMoving) {
-          styles.display = 'none';
-        } else if (isOrthogonal) {
+        if (isOrthogonal) {
           const isEdge = index === 1 || index === path.length - 1;
           if (isEdge) {
             const pointIndex = index === 1 ? index : index - 1;
@@ -312,25 +290,20 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
                 : absolutePath[absolutePath.length - 1];
             const absolutePoint = absolutePath[pointIndex];
 
-            const {
-              minX = startEndPoint[0],
-              minY = startEndPoint[1],
-              maxX = startEndPoint[0],
-              maxY = startEndPoint[1],
-            } = bound ?? {};
-
-            const distToLeft = Math.abs(startEndPoint[0] - minX);
-            const distToRight = Math.abs(startEndPoint[0] - maxX);
-            const distToTop = Math.abs(startEndPoint[1] - minY);
-            const distToBottom = Math.abs(startEndPoint[1] - maxY);
-            const minDist =
-              Math.min(distToLeft, distToRight, distToTop, distToBottom) +
-              40.02;
-            if (Vec.dist(absolutePoint, startEndPoint) <= minDist) {
-              styles.display = 'none';
+            if (bound) {
+              const { minX, minY, maxX, maxY } = bound;
+              const distToLeft = Math.abs(startEndPoint[0] - minX);
+              const distToRight = Math.abs(startEndPoint[0] - maxX);
+              const distToTop = Math.abs(startEndPoint[1] - minY);
+              const distToBottom = Math.abs(startEndPoint[1] - maxY);
+              const minDist =
+                Math.min(distToLeft, distToRight, distToTop, distToBottom) + 40;
+              if (Vec.dist(absolutePoint, startEndPoint) <= minDist + 0.02) {
+                styles.display = 'none';
+              }
             }
           }
-          if (Vec.dist(path[index], path[index - 1]) <= 20) {
+          if (Vec.dist(path[index], path[index - 1]) <= 20.02) {
             styles.display = 'none';
           }
         }
@@ -343,8 +316,8 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
   }
 
   override firstUpdated() {
-    const { edgeless } = this;
-    const { viewport } = edgeless.service;
+    const edgeless = this.edgeless;
+    const viewport = edgeless.service.viewport;
 
     this._lastZoom = viewport.zoom;
     edgeless.service.viewport.viewportUpdated.on(() => {
@@ -353,14 +326,15 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
         this.requestUpdate();
       }
     });
-
-    this._bindEvent();
+    void this.updateComplete.then(() => {
+      this._bindEvent();
+    });
   }
 
   override render() {
-    const { service } = this.edgeless;
+    const service = this.edgeless.service;
     // path is relative to the element's xywh
-    const { path } = this.connector;
+    const path = this.connector.path;
     const zoom = service.viewport.zoom;
     const startPoint = Vec.subScalar(Vec.mul(path[0], zoom), HALF_SIZE);
     const endPoint = Vec.subScalar(
@@ -382,6 +356,23 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
         class="line-controller line-start"
         style=${styleMap(startStyle)}
       ></div>
+      ${middlePointStyles.map((style, index) => {
+        const [beforeLockedX, beforeLockedY] =
+          this.connector.absolutePath[index].lockedAxises;
+        const [afterLockedX, afterLockedY] =
+          this.connector.absolutePath[index + 1].lockedAxises;
+        const isLineLocked =
+          this.connector.mode === ConnectorMode.Orthogonal &&
+          ((beforeLockedX && afterLockedX) || (beforeLockedY && afterLockedY));
+        if (style.display === 'none') {
+          return nothing;
+        }
+        return html`<div
+          style=${styleMap(style)}
+          class="line-anchor ${isLineLocked ? 'locked' : 'unavailable'}"
+          data-point-id=${index}
+        ></div>`;
+      })}
       ${closedAnchorPointStyles.map(
         (style, index) =>
           html`<div
@@ -390,27 +381,6 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
             data-point-id=${index + 1}
           ></div>`
       )}
-      ${middlePointStyles.map((style, index) => {
-        const [beforeFreezedX, beforeFreezedY] =
-          this.connector.absolutePath[index].freezedAxises;
-        const [afterFreezedX, afterFreezedY] =
-          this.connector.absolutePath[index + 1].freezedAxises;
-
-        const isLineFreezed =
-          this.connector.mode === ConnectorMode.Orthogonal &&
-          ((beforeFreezedX && afterFreezedX) ||
-            (beforeFreezedY && afterFreezedY));
-
-        if (style.display === 'none') {
-          return nothing;
-        }
-
-        return html`<div
-          style=${styleMap(style)}
-          class="line-anchor ${isLineFreezed ? 'freezed' : 'unavailable'}"
-          data-point-id=${index}
-        ></div>`;
-      })}
       <div class="line-controller line-end" style=${styleMap(endStyle)}></div>
     `;
   }
@@ -418,8 +388,14 @@ export class EdgelessConnectorHandle extends WithDisposable(LitElement) {
   @queryAll('.line-anchor')
   private accessor _anchorHandlers!: NodeList;
 
+  @queryAll('.line-anchor.available')
+  private accessor _availableAnchors!: NodeList;
+
   @query('.line-end')
   private accessor _endHandler!: HTMLDivElement;
+
+  @queryAll('.line-anchor.locked')
+  private accessor _lockedAnchors!: NodeList;
 
   @query('.line-start')
   private accessor _startHandler!: HTMLDivElement;

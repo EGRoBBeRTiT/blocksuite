@@ -91,9 +91,7 @@ export class ConnectorToolController extends EdgelessToolController<ConnectorToo
       this._startPoint = null;
       return;
     }
-
     this._connector = connector as ConnectorElementModel;
-
     this._connector.stashRapidlyFields();
   }
 

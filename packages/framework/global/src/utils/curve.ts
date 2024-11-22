@@ -640,16 +640,18 @@ export function setBezierOpenedControlPointsAtIndex(
   const pointDir = isStart ? 'out' : 'in';
 
   if (isStrictDirection) {
-    const nearPointDir = isStart ? 'in' : 'out';
-    const dirLen = Vec.len(point[pointDir]);
-    const control = Vec.mul(
-      point[pointDir],
+    const minLength = points.length === 2 ? 100 : 50;
+    const tangentVertical = Vec.rot(point.tangent, -Math.PI / 2);
+    point[pointDir] = Vec.mul(
+      tangentVertical,
       Math.max(
-        Vec.len(points[nearPointIndex][nearPointDir]) / dirLen,
-        50 / dirLen
+        minLength,
+        Math.abs(
+          Vec.pry(Vec.sub(points[nearPointIndex], point), tangentVertical)
+        ) / 3
       )
     );
-    point[pointDir] = control;
+
     return;
   }
 

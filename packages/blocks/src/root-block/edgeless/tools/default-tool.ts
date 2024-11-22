@@ -1098,11 +1098,11 @@ export class DefaultToolController extends EdgelessToolController<DefaultTool> {
           let sourceMoving = !ele.source.id;
           let targetMoving = !ele.target.id;
           for (let i = 0; i < this._toBeMoved.length; i++) {
+            this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
+            this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
             if (sourceMoving && targetMoving) {
               break;
             }
-            this._toBeMoved[i].id === ele.source.id && (sourceMoving = true);
-            this._toBeMoved[i].id === ele.target.id && (targetMoving = true);
           }
           ele.moving = sourceMoving && targetMoving;
           ele.stashRapidlyFields();

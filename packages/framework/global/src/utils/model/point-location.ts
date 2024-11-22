@@ -2,13 +2,15 @@ import type { BooleanNumber } from '../types.js';
 
 import { type IVec, Vec } from './vec.js';
 
-export type SerializedPointLocation = {
-  xy: IVec;
-  tangent: IVec;
-  inVec: IVec;
-  outVec: IVec;
-  lockedAxises: [BooleanNumber, BooleanNumber];
-};
+export class SerializedPointLocation {
+  constructor(
+    public xy: IVec,
+    public tangent: IVec,
+    public inVec: IVec,
+    public outVec: IVec,
+    public lockedAxises: [BooleanNumber, BooleanNumber]
+  ) {}
+}
 
 /**
  * PointLocation is an implementation of IVec with in/out vectors and tangent.
@@ -26,7 +28,7 @@ export class PointLocation extends Array<number> implements IVec {
 
   [1]: number;
 
-  freezedAxises: [boolean, boolean] = [false, false];
+  lockedAxises: [boolean, boolean] = [false, false];
 
   get absIn() {
     return Vec.add(this, this._in);
@@ -69,7 +71,7 @@ export class PointLocation extends Array<number> implements IVec {
     tangent: IVec = [0, 0],
     inVec: IVec = [0, 0],
     outVec: IVec = [0, 0],
-    freezedAxises?: [number | boolean, number | boolean]
+    lockedAxises?: [number | boolean, number | boolean]
   ) {
     super(2);
     this[0] = point[0];
@@ -77,7 +79,7 @@ export class PointLocation extends Array<number> implements IVec {
     this._tangent = tangent;
     this._in = inVec;
     this._out = outVec;
-    this.freezedAxises = [!!freezedAxises?.[0], !!freezedAxises?.[1]];
+    this.lockedAxises = [!!lockedAxises?.[0], !!lockedAxises?.[1]];
   }
 
   static fromSerialized({
@@ -103,21 +105,18 @@ export class PointLocation extends Array<number> implements IVec {
       this._tangent,
       this._in,
       this._out,
-      this.freezedAxises
+      this.lockedAxises
     );
   }
 
   serialize(): SerializedPointLocation {
-    return {
-      xy: this.toVec(),
-      tangent: this._tangent,
-      inVec: this._in,
-      outVec: this._out,
-      lockedAxises: [
-        this.freezedAxises[0] ? 1 : 0,
-        this.freezedAxises[1] ? 1 : 0,
-      ],
-    };
+    return new SerializedPointLocation(
+      this.toVec(),
+      this._tangent,
+      this._in,
+      this._out,
+      [this.lockedAxises[0] ? 1 : 0, this.lockedAxises[1] ? 1 : 0]
+    );
   }
 
   setVec(vec: IVec) {

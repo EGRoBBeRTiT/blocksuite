@@ -643,3 +643,50 @@ export function getCenterAreaBounds(bounds: IBound, ratio: number) {
     rotate,
   };
 }
+
+export function removeExtraPointsOnOneLine(path: PointLocation[]) {
+  if (path.length < 3) {
+    return path;
+  }
+  const newPath: PointLocation[] = [path[0]];
+  let lastIndexOnLine = 1;
+  let lineDir = path[0][0] === path[1][0] ? 0 : 1;
+  for (let i = 2; i < path.length; i++) {
+    if (almostEqual(path[i][lineDir], path[i - 1][lineDir], 0.02)) {
+      lastIndexOnLine = i;
+      continue;
+    }
+    newPath.push(path[lastIndexOnLine]);
+    lastIndexOnLine = i;
+    lineDir = path[i][0] === path[i - 1][0] ? 0 : 1;
+  }
+  newPath.push(path[lastIndexOnLine]);
+  return newPath;
+}
+
+export function getFirstLastLockedPointIndex(path: PointLocation[]) {
+  let firstLockedPointIndex = Number.NaN;
+  let lastLockedPointIndex = Number.NaN;
+
+  for (let i = 0; i < path.length; i++) {
+    const firstLockedAxis = path[i].lockedAxises;
+    const lastLockedAxis = path[path.length - 1 - i].lockedAxises;
+    if (
+      isNaN(firstLockedPointIndex) &&
+      (firstLockedAxis[0] || firstLockedAxis[1])
+    ) {
+      firstLockedPointIndex = i;
+    }
+    if (
+      isNaN(lastLockedPointIndex) &&
+      (lastLockedAxis[0] || lastLockedAxis[1])
+    ) {
+      lastLockedPointIndex = path.length - 1 - i;
+    }
+    if (!isNaN(firstLockedPointIndex) && !isNaN(lastLockedPointIndex)) {
+      break;
+    }
+  }
+
+  return [firstLockedPointIndex, lastLockedPointIndex];
+}
